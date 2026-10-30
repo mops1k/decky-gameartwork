@@ -314,15 +314,21 @@ export const SGDBProvider: FC<{ children: ReactNode }> = ({ children }) => {
   }, [apiRequest]);
 
   useEffect(() => {
-    if (appId) {
-      (async () => {
-        // Get details before overview or some games will be null.
-        await getAppDetails(appId);
-        const overview = await getAppOverview(appId);
-        log('overview', overview);
-        setAppOverview(overview);
-      })();
-    }
+    if (!appId) return;
+    // getAppDetails/getAppOverview can take seconds: the answer for the
+    // previous game must not overwrite the new one.
+    let alive = true;
+    (async () => {
+      // Get details before overview or some games will be null.
+      await getAppDetails(appId);
+      const overview = await getAppOverview(appId);
+      if (!alive) return;
+      log('overview', overview);
+      setAppOverview(overview);
+    })();
+    return () => {
+      alive = false;
+    };
   }, [appId]);
 
   const value = useMemo(() => ({

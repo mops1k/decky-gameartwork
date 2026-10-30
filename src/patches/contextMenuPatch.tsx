@@ -16,11 +16,13 @@ import log from '../utils/log';
 
 // Always add before "Properties..."
 const spliceArtworkItem = (children: any[], appid: number) => {
-  children.find((x: any) => x?.key === 'properties');
   const propertiesMenuItemIdx = children.findIndex((item) =>
     findInReactTree(item, (x) => x?.onSelected && x.onSelected.toString().includes('AppProperties'))
   );
-  children.splice(propertiesMenuItemIdx, 0, (
+  // Steam renamed or dropped "Properties..."? Append instead of splice(-1),
+  // which would put the item before the last entry.
+  const insertAt = propertiesMenuItemIdx === -1 ? children.length : propertiesMenuItemIdx;
+  children.splice(insertAt, 0, (
     <MenuItem
       key="sgdb-change-artwork"
       onSelected={() => {

@@ -104,6 +104,14 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
     setSourceFilter('all');
   }, [assetType]);
 
+  // The chip bar hides itself when the selected source has no artwork left
+  // (a refresh, another game): fall back to "All" instead of an empty grid.
+  useEffect(() => {
+    if (sourceFilter === 'all' || sourceFilter === 'sgdb') return;
+    const available = visibleExternalAssets.some((asset) => asset.source === sourceFilter);
+    if (!available) setSourceFilter('all');
+  }, [sourceFilter, visibleExternalAssets]);
+
   const sourceScopedExternal = useMemo(
     () => (sourceFilter === 'all' || sourceFilter === 'sgdb'
       ? visibleExternalAssets
@@ -220,6 +228,7 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
           asset={asset as ExternalAsset}
           assetType={assetType}
           term={searchTerm || appOverview?.display_name || ''}
+          fallbackTerm={fallbackTerm}
           onApply={async (item) => await setAsset(item.id, item.url)}
           onApplyBundle={applyBundle}
           onPickGame={showGameSelection}

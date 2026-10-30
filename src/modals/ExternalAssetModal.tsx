@@ -20,18 +20,20 @@ const ExternalAssetModal: FC<{
   asset: ExternalAsset;
   assetType: SGDBAssetType;
   term: string;
+  /** SteamGridDB title: the cross-search falls back to it for renamed games. */
+  fallbackTerm?: string;
   onApply: (asset: ExternalAsset) => Promise<void>;
   onApplyBundle: (items: ExternalAsset[]) => Promise<void>;
   /** The store matched the wrong game: reopen the picker. */
   onPickGame?: () => void;
-}> = ({ closeModal, asset, assetType, term, onApply, onApplyBundle, onPickGame }) => {
+}> = ({ closeModal, asset, assetType, term, fallbackTerm, onApply, onApplyBundle, onPickGame }) => {
   const [bundle, setBundle] = useState<ExternalAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    getSourceBundle(term, asset.source, asset.name)
+    getSourceBundle(term, asset.source, asset.name, fallbackTerm)
       .then((items) => {
         if (alive) setBundle(items);
       })
@@ -42,7 +44,7 @@ const ExternalAssetModal: FC<{
     return () => {
       alive = false;
     };
-  }, [asset.name, asset.source, term]);
+  }, [asset.name, asset.source, term, fallbackTerm]);
 
   const bundleKinds = useMemo(
     () => bundle.map((item) => SGDB_ASSET_TYPE_READABLE[item.kind]).join(', '),

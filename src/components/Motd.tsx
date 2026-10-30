@@ -73,11 +73,14 @@ const Motd: FC<Motd> = ({
           'X-Motd-Version': '1',
         },
       });
+      // A non-JSON error page or an API failure must not become the cached motd.
+      if (!res.ok) throw new Error(`motd request failed: ${res.status}`);
       const jsonBody: MotdApiResponse = await res.json();
+      if (!jsonBody || typeof jsonBody.id === 'undefined') throw new Error('motd payload is empty');
       set('motd_cached', jsonBody, true);
       return jsonBody;
     } catch (error) {
-      // fail silently, try again in a week
+      // fail silently, try again on the next launch
     } finally {
       set('motd_last_fetched', Math.floor(new Date().getTime() / 1000), true);
     }
@@ -96,7 +99,7 @@ const Motd: FC<Motd> = ({
       const lastCheck = parseInt(await get('motd_last_fetched', 0));
 
       let motd: MotdApiResponse | null;
-      // only get new motd once a week
+      // Only fetch a new motd once a day: the cache avoids a request per launch.
       if (yesterday >= lastCheck) {
         motd = await fetchMotd();
       } else {

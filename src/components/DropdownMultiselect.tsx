@@ -63,6 +63,12 @@ const DropdownMultiselect: FC<{
 }) => {
   const [itemsSelected, setItemsSelected] = useState<any>(selected);
 
+  // "Reset Filters" swaps the selected values from the outside: the menu has
+  // to follow, otherwise its checkboxes keep the previous choice.
+  useEffect(() => {
+    setItemsSelected(selected);
+  }, [selected]);
+
   const handleItemSelect = useCallback((checked: boolean, value: string | ReactNode) => {
     setItemsSelected((x: any) => (checked ?
       [...x.filter((y: any) => y !== value), value] :
@@ -120,7 +126,10 @@ const DropdownMultiselect: FC<{
       <Marquee>
         {
           selected.length > 0 ?
-            selected.map((x: any) => items[items.findIndex((v) => v.value === x)].label).join(', ') :
+            // A stored filter may name a value this version no longer offers
+            // (or a backup restored an old one): show the raw value instead of
+            // crashing on items[-1].
+            selected.map((x: any) => items.find((v) => v.value === x)?.label ?? x).join(', ') :
             '…'
         }
       </Marquee>

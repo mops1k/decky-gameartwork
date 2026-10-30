@@ -1,4 +1,5 @@
 import sys
+import asyncio
 import html
 import json
 import re
@@ -23,14 +24,22 @@ STEAM_ASSET_BASE = "https://shared.steamstatic.com/store_item_assets/"
 STEAM_ICON_BASE = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/"
 # Same key the frontend uses when the user has not set a personal one.
 SGDB_PLUGIN_KEY = '6465636b796c6f616465723432303639'
+# Cloudflare in front of steamgriddb.com rejects unknown clients with a 401
+# ("Invalid API key" in the body), while the loader proxy answers fine: the
+# WAF rule accepts a UA shaped like the Decky one, so the health check uses it.
+SGDB_USER_AGENT = "Decky/3 (https://decky.xyz)"
+BACKEND_USER_AGENT = "gameartwork backend"
 
-def get_json(url: str, params=None, timeout: int = 15, retries: int = 1):
+def get_json(url: str, params=None, timeout: int = 15, retries: int = 1, headers=None):
     if params:
         url = "%s?%s" % (url, urlencode(params))
-    req = Request(url, headers={
-        "User-Agent": "gameartwork backend",
+    request_headers = {
+        "User-Agent": BACKEND_USER_AGENT,
         "Accept": "application/json",
-    })
+    }
+    if headers:
+        request_headers.update(headers)
+    req = Request(url, headers=request_headers)
     attempt = 0
     while True:
         try:
@@ -68,6 +77,11 @@ def http_status(url: str, timeout: int = 8):
             return res.status
     except Exception:
         return None
+
+def _read_json_body(req, timeout=25):
+    """One blocking JSON POST/GET, meant to run inside a worker thread."""
+    with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8"))
 
 GOG_GENERIC_TITLES = ("Лучшие видеоигры", "Best video games", "GOG.COM")
 GOG_CATALOG_URL = "https://catalog.gog.com/v1/catalog"
@@ -411,24 +425,45 @@ def detect_latest_version():
     match = re.search(r'/releases/tag/([^/?#]+)', final_url)
     return match.group(1).lstrip('vV') if match else ''
 
+def _fetch_base64(url, timeout=30):
+    req = Request(url, headers={'User-Agent': BACKEND_USER_AGENT})
+    with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+        return b64encode(res.read()).decode('utf-8')
+
+
+def _read_file_base64(path):
+    with open(path, 'rb') as image_file:
+        return b64encode(image_file.read()).decode('utf-8')
+
+
+def _download_to_file(url, output_dir, file_name, timeout=30):
+    """Blocking download + write, run from a worker thread."""
+    req = Request(url, headers={'User-Agent': BACKEND_USER_AGENT})
+    with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+        content = res.read()
+    target = Path(output_dir) / file_name
+    with open(target, mode='wb') as f:
+        f.write(content)
+    return str(target)
+
 class Plugin:
     CACHE_TTL = 6 * 60 * 60
+    # An empty answer is usually a blip (Cloudflare 404, a store hiccup), so it
+    # must not hide the source for hours: keep it only for a few minutes.
+    CACHE_EMPTY_TTL = 5 * 60
     CACHE_LIMIT = 500
     CACHE_FILE = 'source-cache.json'
-    BACKUP_PREFIXES = ('nonsteam_', 'external_name_', 'applied_art_', 'steam_appid_', 'sources_enabled', 'sgdb_api_key', 'igdb_client_id', 'igdb_client_secret', 'filters_')
+    # Credentials never leave the device inside a settings backup.
+    BACKUP_PREFIXES = ('nonsteam_', 'external_name_', 'applied_art_', 'steam_appid_', 'sources_enabled', 'igdb_client_id', 'filters_')
+    BACKUP_SECRETS = ('sgdb_api_key', 'igdb_client_secret')
 
     async def _main(self):
         self.settings = SettingsManager(name="steamgriddb", settings_directory=decky.DECKY_PLUGIN_SETTINGS_DIR)
         self._cache = self._load_cache()
         self._cache_saved_at = 0
-        try:
-            import asyncio
-            asyncio.get_event_loop().create_task(self._selftest())
-        except Exception as exc:
-            decky.logger.warning("[gameartwork] cannot schedule selftest: %s" % exc)
 
     async def _selftest(self):
-        """One-shot check that the keyless sources are reachable from Decky."""
+        """One-shot check of the keyless sources, run on demand from the log."""
         try:
             epic = await self.epic_search_games("End of Abyss")
             decky.logger.info("[gameartwork] selftest epic: %s" % [g["name"] for g in epic[:3]])
@@ -448,16 +483,19 @@ class Plugin:
         pass
 
     async def source_health(self):
-        """Ping every source (cache bypassed) for the Quick Access health panel."""
-        import asyncio
+        """Ping every source (cache bypassed) for the Quick Access health panel.
 
-        async def check_steam():
+        Every check is blocking network I/O, so it runs in a worker thread:
+        otherwise the gather below would still hit the sources one by one and
+        freeze the plugin loop for the sum of all timeouts.
+        """
+        def check_steam():
             data = get_json("https://store.steampowered.com/api/storesearch/", {
                 "term": "Hollow Knight", "l": "english", "cc": "US",
             }, timeout=12)
             return bool(data.get("items"))
 
-        async def check_epic():
+        def check_epic():
             query = (
                 "query s($Keywords:String!){Catalog{searchStore(keywords:$Keywords,"
                 "country:\"US\",locale:\"en-US\",count:1){elements{title}}}}"
@@ -468,14 +506,14 @@ class Plugin:
             }, timeout=15)
             return bool(((data.get("data") or {}).get("Catalog") or {}).get("searchStore"))
 
-        async def check_gog():
+        def check_gog():
             data = get_json(GOG_CATALOG_URL, {
                 "limit": 1, "page": 1, "countryCode": "US", "locale": "en-US",
                 "query": "like:cyberpunk",
             }, timeout=20, retries=1)
             return data.get("products") is not None
 
-        async def check_vndb():
+        def check_vndb():
             data = post_json("https://api.vndb.org/kana/vn", {
                 "filters": ["search", "=", "steins gate"],
                 "fields": "id",
@@ -483,12 +521,12 @@ class Plugin:
             }, timeout=15)
             return isinstance(data.get("results"), list)
 
-        async def check_igdb():
+        def check_igdb():
             client_id, client_secret = self._igdb_credentials()
             if not client_id or not client_secret:
                 # Keyless mode: the public site is the source, so ping it.
                 return bool(igdb_web_search("portal", limit=1))
-            token, igdb_client = await self._igdb_access_token()
+            token, igdb_client = self._igdb_access_token()
             if not token:
                 raise RuntimeError('IGDB token request failed')
             req = Request(IGDB_GAMES_URL, data=b'fields id; limit 1;', method='POST', headers={
@@ -496,19 +534,21 @@ class Plugin:
                 "Authorization": "Bearer %s" % token,
                 "Accept": "application/json",
                 "Content-Type": "text/plain",
-                "User-Agent": "gameartwork backend",
+                "User-Agent": BACKEND_USER_AGENT,
             })
             with urlopen(req, context=get_ssl_context(), timeout=15) as res:
                 return isinstance(json.loads(res.read().decode("utf-8")), list)
 
-        async def check_sgdb():
+        def check_sgdb():
             key = (self.settings.getSetting('sgdb_api_key', '') or '').strip() or SGDB_PLUGIN_KEY
+            # The API itself sits behind Cloudflare, which answers 401 to the
+            # plain backend UA even for a valid key: use the Decky-like one.
             req = Request(
                 "https://www.steamgriddb.com/api/v2/search/autocomplete/portal",
                 headers={
                     "Authorization": "Bearer %s" % key,
                     "Accept": "application/json",
-                    "User-Agent": "gameartwork backend",
+                    "User-Agent": SGDB_USER_AGENT,
                 },
             )
             with urlopen(req, context=get_ssl_context(), timeout=15) as res:
@@ -530,7 +570,7 @@ class Plugin:
         async def run(name, check):
             started = time.time()
             try:
-                ok = await check()
+                ok = await asyncio.to_thread(check)
                 results[name] = {
                     'ok': bool(ok),
                     'ms': int((time.time() - started) * 1000),
@@ -552,6 +592,7 @@ class Plugin:
             key: value
             for key, value in data.items()
             if isinstance(key, str) and key.startswith(self.BACKUP_PREFIXES)
+            and key not in self.BACKUP_SECRETS
         }
 
     def _backup_dir(self):
@@ -611,14 +652,23 @@ class Plugin:
             settings = payload.get('settings') if isinstance(payload, dict) else None
             if not isinstance(settings, dict):
                 return {'ok': False, 'error': 'invalid backup file'}
-            applied = 0
+            pending = {}
             for key, value in settings.items():
                 if not isinstance(key, str) or not key.startswith(self.BACKUP_PREFIXES):
                     continue
-                self.settings.setSetting(key, value)
-                applied += 1
-            decky.logger.info('[gameartwork] imported %d settings from %s' % (applied, target))
-            return {'ok': True, 'count': applied, 'source': str(target)}
+                # Older backups may still carry credentials: never restore them.
+                if key in self.BACKUP_SECRETS:
+                    continue
+                pending[key] = value
+            if not pending:
+                return {'ok': False, 'error': 'backup has no settings to restore'}
+            # SettingsManager.setSetting() rewrites the whole settings file on
+            # every call, so a backup with hundreds of games would mean hundreds
+            # of writes: update the in-memory map and commit once.
+            self.settings.settings.update(pending)
+            self.settings.commit()
+            decky.logger.info('[gameartwork] imported %d settings from %s' % (len(pending), target))
+            return {'ok': True, 'count': len(pending), 'source': str(target)}
         except Exception as exc:
             decky.logger.warning('[gameartwork] import failed: %s' % exc)
             return {'ok': False, 'error': str(exc)}
@@ -673,7 +723,10 @@ class Plugin:
         if not entry:
             return None
         ts, value = entry
-        if allow_stale or time.time() - ts <= self.CACHE_TTL:
+        if allow_stale:
+            return value
+        ttl = self.CACHE_TTL if value else self.CACHE_EMPTY_TTL
+        if time.time() - ts <= ttl:
             return value
         # Keep the expired entry: when the network is down it is the only
         # answer we can still give.
@@ -681,12 +734,19 @@ class Plugin:
 
     def _stale_or_none(self, key):
         """Last known answer regardless of age: offline mode."""
-        return self._cache_get(key, allow_stale=True)
+        value = self._cache_get(key, allow_stale=True)
+        # An empty answer is not worth showing offline: it only means the
+        # source failed once.
+        return value if value else None
 
     def _cache_set(self, key, value):
-        # keep the cache small: this runs inside the Decky loader process
-        if len(self._cache) > self.CACHE_LIMIT:
-            self._cache.clear()
+        # This runs inside the Decky loader process: keep the map small, but
+        # drop the oldest entries instead of the whole cache (stale answers are
+        # what keeps the grid usable offline).
+        if key not in self._cache and len(self._cache) >= self.CACHE_LIMIT:
+            oldest = sorted(self._cache.items(), key=lambda item: item[1][0])[:len(self._cache) - self.CACHE_LIMIT + 1]
+            for old_key, _ in oldest:
+                self._cache.pop(old_key, None)
         self._cache[key] = (time.time(), value)
         self._save_cache()
         return value
@@ -701,7 +761,7 @@ class Plugin:
         if cached is not None:
             return cached
         try:
-            data = get_json("https://store.steampowered.com/api/storesearch/", {
+            data = await asyncio.to_thread(get_json, "https://store.steampowered.com/api/storesearch/", {
                 "term": term,
                 "l": lang,
                 "cc": "US",
@@ -746,7 +806,7 @@ class Plugin:
             "data_request": {"include_assets": True},
         }, separators=(",", ":"))
         try:
-            data = get_json("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", {
+            data = await asyncio.to_thread(get_json, "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", {
                 "input_json": input_json,
             })
         except Exception as exc:
@@ -796,7 +856,7 @@ class Plugin:
                     "height": 620,
                 },
                 "logo": {
-                    "url": logo_url if http_status(logo_url, timeout=6) == 200 else None,
+                    "url": logo_url if await asyncio.to_thread(http_status, logo_url, 6) == 200 else None,
                     "width": 640,
                     "height": 160,
                 },
@@ -824,7 +884,7 @@ class Plugin:
             "elements{title id productSlug keyImages{type url}}}}}"
         )
         try:
-            data = post_json("https://store.epicgames.com/graphql", {
+            data = await asyncio.to_thread(post_json, "https://store.epicgames.com/graphql", {
                 "query": query,
                 "variables": {
                     "Keywords": term,
@@ -896,7 +956,7 @@ class Plugin:
         if cached is not None:
             return cached
         try:
-            data = post_json("https://api.vndb.org/kana/vn", {
+            data = await asyncio.to_thread(post_json, "https://api.vndb.org/kana/vn", {
                 "filters": ["search", "=", term],
                 "fields": "id,title,image.url,screenshots.url",
                 "results": 10,
@@ -941,7 +1001,7 @@ class Plugin:
         client_secret = (self.settings.getSetting("igdb_client_secret", "") or "").strip()
         return client_id, client_secret
 
-    async def _igdb_access_token(self):
+    def _igdb_access_token(self):
         client_id, client_secret = self._igdb_credentials()
         if not client_id or not client_secret:
             return None, None
@@ -976,12 +1036,12 @@ class Plugin:
         cached = self._cache_get(key)
         if cached is not None:
             return cached
-        token, client_id = await self._igdb_access_token()
+        token, client_id = await asyncio.to_thread(self._igdb_access_token)
         if not token:
             # No Twitch key: scrape the public site (cover + screenshots only).
             decky.logger.info("[gameartwork] igdb keyless, reading igdb.com")
             try:
-                return self._cache_set(key, igdb_web_games(term))
+                return self._cache_set(key, await asyncio.to_thread(igdb_web_games, term))
             except Exception as exc:
                 decky.logger.warning("[gameartwork] igdb web search failed: %s" % exc)
                 return self._cache_set(key, [])
@@ -995,8 +1055,7 @@ class Plugin:
             "User-Agent": "gameartwork backend",
         })
         try:
-            with urlopen(req, context=get_ssl_context(), timeout=25) as res:
-                items = json.loads(res.read().decode("utf-8"))
+            items = await asyncio.to_thread(_read_json_body, req, 25)
         except Exception as exc:
             stale = self._stale_or_none(key)
             if stale is not None:
@@ -1004,7 +1063,7 @@ class Plugin:
                 return stale
             decky.logger.warning("[gameartwork] igdb request failed: %s" % exc)
             try:
-                return self._cache_set(key, igdb_web_games(term))
+                return self._cache_set(key, await asyncio.to_thread(igdb_web_games, term))
             except Exception as web_exc:
                 decky.logger.warning("[gameartwork] igdb web search failed: %s" % web_exc)
                 return self._cache_set(key, [])
@@ -1065,7 +1124,7 @@ class Plugin:
 
         games = []
         try:
-            games = gog_catalog_games(term)
+            games = await asyncio.to_thread(gog_catalog_games, term)
         except Exception as exc:
             stale = self._stale_or_none(key)
             if stale is not None:
@@ -1073,21 +1132,18 @@ class Plugin:
                 return stale
             decky.logger.warning("[gameartwork] gog catalog failed: %s" % exc)
         if not games:
-            games = gog_slug_games(term)
+            games = await asyncio.to_thread(gog_slug_games, term)
 
         decky.logger.info("[gameartwork] gog search %r -> %d" % (term, len(games)))
         return self._cache_set(key, games)
 
     async def download_as_base64(self, url=''):
-        # A stuck CDN must not block applying artwork forever.
-        req = Request(url, headers={'User-Agent': 'gameartwork backend'})
-        with urlopen(req, context=get_ssl_context(), timeout=30) as res:
-            content = res.read()
-        return b64encode(content).decode('utf-8')
+        # A stuck CDN must not block applying artwork forever; the download
+        # itself runs in a thread so the plugin loop keeps answering.
+        return await asyncio.to_thread(_fetch_base64, url, 30)
 
     async def read_file_as_base64(self, path=''):
-        with open(path, 'rb') as image_file:
-            return b64encode(image_file.read()).decode('utf-8')
+        return await asyncio.to_thread(_read_file_base64, path)
 
     async def get_local_start(self):
         return decky.DECKY_USER_HOME
@@ -1095,15 +1151,9 @@ class Plugin:
     async def download_file(self, url='', output_dir='', file_name=''):
         decky.logger.debug((url, output_dir, file_name))
         try:
-            if access(output_dir, W_OK):
-                req = Request(url, headers={'User-Agent': 'gameartwork backend'})
-                with urlopen(req, context=get_ssl_context(), timeout=30) as res:
-                    if res.status != 200:
-                        return False
-                    content = res.read()
-                with open(Path(output_dir) / file_name, mode='wb') as f:
-                    f.write(content)
-                return str(Path(output_dir) / file_name)
+            if not access(output_dir, W_OK):
+                return False
+            return await asyncio.to_thread(_download_to_file, url, output_dir, file_name, 30)
         except Exception as exc:
             decky.logger.warning('[gameartwork] download failed for %s: %s' % (url, exc))
         return False
@@ -1157,7 +1207,8 @@ class Plugin:
     async def set_shortcut_icon(self, appid, owner_id, path=None):
         shortcuts_vdf = get_userdata_config(owner_id) / 'shortcuts.vdf'
 
-        d = binary_load(open(shortcuts_vdf, "rb"))
+        with open(shortcuts_vdf, "rb") as shortcuts_file:
+            d = binary_load(shortcuts_file)
         for shortcut in d['shortcuts'].values():
             shortcut_appid = (shortcut['appid'] & 0xffffffff) | 0x80000000
             if shortcut_appid == appid:
@@ -1169,7 +1220,17 @@ class Plugin:
                     shortcut['icon'] = ''
                 else:
                     shortcut['icon'] = path
-                binary_dump(d, open(shortcuts_vdf, 'wb'))
+                # shortcuts.vdf holds every shortcut of the user: keep a copy
+                # and write atomically, a half-written file loses them all.
+                backup = shortcuts_vdf.with_name('shortcuts.vdf.bak')
+                try:
+                    copyfile(shortcuts_vdf, backup)
+                except Exception as exc:
+                    decky.logger.warning('[gameartwork] cannot back up shortcuts.vdf: %s' % exc)
+                temporary = shortcuts_vdf.with_name('shortcuts.vdf.tmp')
+                with open(temporary, 'wb') as output_file:
+                    binary_dump(d, output_file)
+                temporary.replace(shortcuts_vdf)
                 return True
         raise Exception('Could not find shortcut to edit')
 
@@ -1239,7 +1300,7 @@ class Plugin:
         api_error = ''
         release = None
         try:
-            release = get_json(PLUGIN_UPDATE_URL, timeout=20)
+            release = await asyncio.to_thread(get_json, PLUGIN_UPDATE_URL, timeout=20)
         except Exception as exc:
             decky.logger.warning('[gameartwork] GitHub API update check failed: %s' % exc)
             api_error = str(exc)
@@ -1264,7 +1325,7 @@ class Plugin:
             # The API is rate limited or unreachable: fall back to the web redirect,
             # which still gives us the version and therefore the release asset URL.
             try:
-                latest = detect_latest_version() or current
+                latest = await asyncio.to_thread(detect_latest_version) or current
                 info.update({'latest': latest, 'url': release_asset_url(latest)})
                 checked_ok = True
             except Exception as exc:

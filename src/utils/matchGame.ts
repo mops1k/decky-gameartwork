@@ -4,14 +4,22 @@
  * edition, a sequel or a soundtrack instead of the game itself.
  */
 
-const NOISE_WORDS = new Set(['the', 'a', 'an', 'of', 'and', 'edition', 'definitive', 'remastered', 'remaster']);
+const NOISE_WORDS = new Set([
+  'the', 'a', 'an', 'of', 'and',
+  'edition', 'definitive', 'remastered', 'remaster',
+  'goty', 'ultimate', 'deluxe', 'complete', 'enhanced',
+  'collector', 'collectors', 'hd',
+]);
+// Sequel numbers and roman numerals: "Hades" and "Hades II" are two games.
+const NUMERAL = /^(?:\d{1,3}|[ivx]{1,5})$/i;
 
+/** Keep letters of every alphabet: CJK, Cyrillic and accented titles too. */
 export const normalizeTitle = (title: string): string =>
   (title || '')
     .toLowerCase()
     .replace(/[™®©]/g, ' ')
     .replace(/[’'`]/g, '')
-    .replace(/[^a-z0-9а-яё]+/gi, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -23,15 +31,20 @@ export const scoreMatch = (query: string, candidate: string): number => {
   const queryTokens = tokens(query);
   const candidateTokens = tokens(candidate);
   if (!queryTokens.length || !candidateTokens.length) return 0;
+  if (normalizeTitle(query) === normalizeTitle(candidate)) return 1;
 
+  const querySet = new Set(queryTokens);
+  const candidateSet = new Set(candidateTokens);
   let common = 0;
-  for (const token of queryTokens) {
-    if (candidateTokens.includes(token)) common++;
+  for (const token of querySet) {
+    if (candidateSet.has(token)) common++;
   }
 
-  const coverage = common / queryTokens.length;
-  const exact = normalizeTitle(query) === normalizeTitle(candidate);
-  return exact ? 1 : coverage;
+  const coverage = common / querySet.size;
+  // A numbering the query does not have ("Hades" vs "Hades II", "Portal" vs
+  // "Portal 2") points at a different game, however much of the title matches.
+  const extraNumeral = candidateTokens.some((token) => NUMERAL.test(token) && !querySet.has(token));
+  return extraNumeral ? Math.min(coverage, 0.5) : coverage;
 };
 
 export const isConfidentMatch = (query: string, candidate: string): boolean => {
@@ -42,7 +55,11 @@ export const isConfidentMatch = (query: string, candidate: string): boolean => {
 /** Best candidate for the query, or undefined when the match is not confident. */
 export const pickBestMatch = (query: string, candidates: Array<{ name: string }>): any | undefined => {
   if (!candidates?.length) return undefined;
-  if (candidates.length === 1) return candidates[0];
+  // One result is not automatically the right game: only trust it when the
+  // title agrees, otherwise the caller would apply another game's artwork.
+  if (candidates.length === 1) {
+    return isConfidentMatch(query, candidates[0].name) ? candidates[0] : undefined;
+  }
 
   let best: any;
   let bestScore = -1;

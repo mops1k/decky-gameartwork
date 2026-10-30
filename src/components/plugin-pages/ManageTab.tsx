@@ -14,6 +14,7 @@ import LibraryImage from '../asset/LibraryImage';
 import getAppOverview from '../../utils/getAppOverview';
 import { ASSET_TYPE, SGDB_ASSET_TYPE_READABLE } from '../../constants';
 import openFilePicker from '../../utils/openFilePicker';
+import log from '../../utils/log';
 import LogoPositionerModal from '../../modals/LogoPositionerModal';
 
 const AssetBlock: FC<{
@@ -54,10 +55,18 @@ const AssetBlock: FC<{
   }, [isShortcutIcon, isShortcutIconLoaded]);
 
   const handleBrowse = async () => {
-    const path = await openFilePicker(browseStartPath, true, undefined, {
-      validFileExtensions: ['png','jpg','jpeg','gif','webp','apng','tiff','tga'],
-    });
-    await changeAssetFromUrl(path.path as string, assetType, true);
+    // The picker rejects when the user closes it: that is not an error.
+    let path: { path: string } | undefined;
+    try {
+      path = await openFilePicker(browseStartPath, true, undefined, {
+        validFileExtensions: ['png','jpg','jpeg','gif','webp','apng','tiff','tga'],
+      });
+    } catch (err) {
+      log('file picker closed', err);
+      return;
+    }
+    if (!path?.path) return;
+    await changeAssetFromUrl(path.path, assetType, true);
     await refreshOverview();
   };
 

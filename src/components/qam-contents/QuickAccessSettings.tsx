@@ -77,12 +77,20 @@ const QuickAccessSettings: VFC = () => {
   });
   const [health, setHealth] = useState<Record<string, { ok: boolean; ms: number; error: string }> | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState('');
   const [backupMessage, setBackupMessage] = useState('');
   const [importConfirm, setImportConfirm] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; applied: number; skipped: number; failed: number } | null>(null);
   const bulkCancel = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const handleBulkApply = useCallback(async () => {
     setBulkConfirm(false);
@@ -107,53 +115,60 @@ const QuickAccessSettings: VFC = () => {
       { kind: 'logo', type: ASSET_TYPE.logo },
     ];
 
-    for (const app of shortcuts) {
-      if (bulkCancel.current) break;
-      progress.done += 1;
-      try {
-        // Never touch a game that already has custom artwork.
-        const state = await call<[number, string], Record<string, boolean>>('custom_artwork_state', app.appid, ownerId);
-        if (state && Object.values(state).some(Boolean)) {
-          progress.skipped += 1;
-        } else {
-          const best = pickBestMatch(app.display_name, await searchSteamApps(app.display_name));
-          if (!best || !isConfidentMatch(app.display_name, best.name)) {
+    try {
+      for (const app of shortcuts) {
+        if (bulkCancel.current) break;
+        progress.done += 1;
+        try {
+          // Never touch a game that already has custom artwork.
+          const state = await call<[number, string], Record<string, boolean>>('custom_artwork_state', app.appid, ownerId);
+          if (state && Object.values(state).some(Boolean)) {
             progress.skipped += 1;
           } else {
-            const assets = await getSteamAppAssets(best.appid);
-            let appliedAny = false;
-            for (const { kind, type } of kinds) {
-              const asset = (assets?.assets as any)?.[kind];
-              if (!asset?.url) continue;
-              try {
-                const data = await call<[string], string>('download_as_base64', asset.url);
-                await (window as any).SteamClient.Apps.SetCustomArtworkForApp(app.appid, data, 'png', type);
-                appliedAny = true;
-              } catch (err) {
-                log('bulk apply failed', kind, err);
+            const best = pickBestMatch(app.display_name, await searchSteamApps(app.display_name));
+            if (!best || !isConfidentMatch(app.display_name, best.name)) {
+              progress.skipped += 1;
+            } else {
+              const assets = await getSteamAppAssets(best.appid);
+              let appliedAny = false;
+              for (const { kind, type } of kinds) {
+                const asset = (assets?.assets as any)?.[kind];
+                if (!asset?.url) continue;
+                try {
+                  const data = await call<[string], string>('download_as_base64', asset.url);
+                  await (window as any).SteamClient.Apps.SetCustomArtworkForApp(app.appid, data, 'png', type);
+                  appliedAny = true;
+                } catch (err) {
+                  log('bulk apply failed', kind, err);
+                }
               }
+              if (appliedAny) progress.applied += 1;
+              else progress.skipped += 1;
             }
-            if (appliedAny) progress.applied += 1;
-            else progress.skipped += 1;
           }
+        } catch (err) {
+          log('bulk apply failed', app.display_name, err);
+          progress.failed += 1;
         }
-      } catch (err) {
-        log('bulk apply failed', app.display_name, err);
-        progress.failed += 1;
+        if (!mounted.current) break;
+        setBulkProgress({ ...progress });
       }
-      setBulkProgress({ ...progress });
+    } finally {
+      // A thrown error used to leave the panel "running" forever.
+      if (mounted.current) setBulkRunning(false);
     }
-    setBulkRunning(false);
   }, []);
 
   const handleHealthCheck = useCallback(async () => {
     setHealthLoading(true);
+    setHealthError('');
     try {
       const result = await call<[], Record<string, { ok: boolean; ms: number; error: string }>>('source_health');
       setHealth(result || {});
     } catch (err: any) {
       setHealth({});
-      setBackupMessage(err?.message || '');
+      // Its own message: the backup section must not show a health failure.
+      setHealthError(err?.message || String(err));
     } finally {
       setHealthLoading(false);
     }
@@ -312,12 +327,13 @@ const QuickAccessSettings: VFC = () => {
                 resetValue={0}
               />
               <DialogButton onClick={() => {
+                // Closing the picker rejects the promise: not an error.
                 openFilePicker(
                   FileSelectionType.FOLDER,
                   '/',
                   false,
                   true
-                );
+                ).catch(() => undefined);
               }}
               >
               directory picker
@@ -514,6 +530,13 @@ const QuickAccessSettings: VFC = () => {
               </div>
             </PanelSectionRow>
           ))
+          : null}
+        {healthError
+          ? (
+            <PanelSectionRow>
+              <div style={{ fontSize: '12px', padding: '4px 0' }}>{healthError}</div>
+            </PanelSectionRow>
+          )
           : null}
         <PanelSectionRow>
           <DialogButton onClick={handleHealthCheck} disabled={healthLoading}>

@@ -4,7 +4,6 @@ import {
   useState,
   useRef,
   ImgHTMLAttributes,
-  useCallback,
 } from 'react';
 import { IconsModule } from '@decky/ui';
 
@@ -33,32 +32,34 @@ export const LazyImage: FC<LazyImage> = ({
   const [error, setError] = useState(false);
   const intersectRef = useRef<HTMLDivElement>(null);
 
-  const imgRefCb = useCallback((img: HTMLImageElement | HTMLVideoElement | null) => {
-    if (!img) return;
+  const elementRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+
+  // React 18 ignores a cleanup returned from a callback ref, so the listeners
+  // used to leak on every unmount: bind them in an effect instead.
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
 
     const onLoad = () => {
       if (isVideo) {
-        (img as HTMLVideoElement).play();
+        (element as HTMLVideoElement).play();
       }
       setLoading(false);
     };
     const onError = () => setError(true);
 
-    if (isVideo) {
-      img.addEventListener('canplaythrough', onLoad);
-    } else {
-      img.addEventListener('load', onLoad);
+    const loadEvent = isVideo ? 'canplaythrough' : 'load';
+    element.addEventListener(loadEvent, onLoad);
+    element.addEventListener('error', onError);
+    // A cached image can finish before the listener is attached.
+    if (!isVideo && (element as HTMLImageElement).complete && (element as HTMLImageElement).naturalWidth > 0) {
+      onLoad();
     }
-    img.addEventListener('error', onError);
     return () => {
-      if (isVideo) {
-        img.removeEventListener('canplaythrough', onLoad);
-      } else {
-        img.removeEventListener('load', onLoad);
-      }
-      img.removeEventListener('error', onError);
+      element.removeEventListener(loadEvent, onLoad);
+      element.removeEventListener('error', onError);
     };
-  }, [isVideo]);
+  }, [isVideo, src, inViewport]);
 
   // reset some state when src changes
   useEffect(() => {
@@ -115,7 +116,7 @@ export const LazyImage: FC<LazyImage> = ({
             />
           )}
           <img
-            ref={imgRefCb}
+            ref={elementRef as any}
             data-loaded={loading ? 'false' : 'true'}
             src={src}
             {...props}
@@ -125,7 +126,7 @@ export const LazyImage: FC<LazyImage> = ({
 
       {(inViewport && isVideo && error !== true) && (
         <video
-          ref={imgRefCb}
+          ref={elementRef as any}
           data-loaded={loading ? 'false' : 'true'}
           src={src}
           autoPlay={false}

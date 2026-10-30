@@ -135,15 +135,30 @@ const GameSelectionModal: FC<{
     closeModal?.();
   };
 
+  const searchSeq = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+
   const handleSearch = useMemo(() => debounce(async (term) => {
+    const requestId = ++searchSeq.current;
+    const alive = () => mounted.current && searchSeq.current === requestId;
     if (!term) {
-      setLoading(false);
+      // Clearing the field has to clear the results of the previous term.
+      if (alive()) {
+        setGames([]);
+        setExternals([]);
+        setLoading(false);
+      }
       return;
     }
     const [resp, externalTitles] = await Promise.all([
       searchGames(term),
       onSelectExternal ? searchExternalTitles(term) : Promise.resolve([] as ExternalTitle[]),
     ]);
+    // A slower answer for an older term must not replace the current list.
+    if (!alive()) return;
     setGames(resp);
     const seen = new Set<string>();
     setExternals(externalTitles.filter((item) => {
@@ -158,6 +173,11 @@ const GameSelectionModal: FC<{
     setLoading(true);
     handleSearch(value);
   }, [handleSearch, value]);
+
+  useEffect(() => () => {
+    // The debounced search may still be queued when the modal closes.
+    searchSeq.current += 1;
+  }, []);
 
   return (
     <ModalRoot className="sgdb-modal sgdb-modal-gameselect" closeModal={closeModal}>

@@ -144,6 +144,11 @@ export const getEnabledSources = async (): Promise<EnabledSources> => {
 /** Called after the settings toggle so the next search re-reads the switches. */
 export const invalidateEnabledSources = () => {
   enabledSourcesCache = null;
+  // The cross-search cache holds the tiles of the previous switch set: without
+  // dropping it a just-disabled source keeps feeding the grid for up to ten
+  // minutes.
+  resultCache.clear();
+  titleCache.clear();
 };
 
 export type ExternalSearchProgress = {
@@ -194,7 +199,27 @@ export const searchExternalTitles = async (term: string): Promise<ExternalTitle[
 const inFlight = new Map<string, Promise<ExternalAsset[]>>();
 
 const LOCAL_CACHE_PREFIX = 'gameartwork:external:';
+const LOCAL_CACHE_INDEX = 'gameartwork:external:index';
 const LOCAL_CACHE_TTL = 24 * 60 * 60 * 1000;
+// localStorage is ~5 MB for the whole client: keep the newest games only.
+const LOCAL_CACHE_MAX = 30;
+
+/** Drop the oldest entries so the cache cannot fill the client storage. */
+const pruneLocalCache = (keepKey: string) => {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_INDEX);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const keys: string[] = Array.isArray(parsed) ? parsed.filter((key: unknown) => typeof key === 'string') : [];
+    const ordered = keys.filter((key: string) => key !== keepKey);
+    ordered.push(keepKey);
+    for (const key of ordered.slice(0, Math.max(0, ordered.length - LOCAL_CACHE_MAX))) {
+      window.localStorage.removeItem(key);
+    }
+    window.localStorage.setItem(LOCAL_CACHE_INDEX, JSON.stringify(ordered.slice(-LOCAL_CACHE_MAX)));
+  } catch {
+    // Storage may be full or unavailable: the in-memory cache is enough.
+  }
+};
 
 /** Results survive a Decky restart and a lost connection in localStorage. */
 const readLocalCache = (key: string): ExternalAsset[] | null => {
@@ -213,7 +238,9 @@ const readLocalCache = (key: string): ExternalAsset[] | null => {
 const writeLocalCache = (key: string, assets: ExternalAsset[]) => {
   try {
     if (!assets.length) return;
-    window.localStorage.setItem(LOCAL_CACHE_PREFIX + key, JSON.stringify({ at: Date.now(), assets }));
+    const storageKey = LOCAL_CACHE_PREFIX + key;
+    window.localStorage.setItem(storageKey, JSON.stringify({ at: Date.now(), assets }));
+    pruneLocalCache(storageKey);
   } catch {
     // localStorage may be unavailable or full: the in-memory cache still works
   }
@@ -307,9 +334,13 @@ export const searchExternalSources = async (
         return local;
       }
     }
-    if (resultCache.size > 100) resultCache.clear();
-    resultCache.set(cacheKey, { at: Date.now(), assets: ordered, enabled });
-    writeLocalCache(cacheKey, ordered);
+    if (ordered.length) {
+      // An empty answer is not a result: caching it would keep the grid empty
+      // for ten minutes after a single network blip.
+      if (resultCache.size > 100) resultCache.clear();
+      resultCache.set(cacheKey, { at: Date.now(), assets: ordered, enabled });
+      writeLocalCache(cacheKey, ordered);
+    }
     call('log_debug', `cross-search "${query}": ${ordered.length} asset(s) from ${[...new Set(ordered.map((a) => a.source))].join(', ') || 'none'}`).catch(() => undefined);
     return ordered;
   };
@@ -330,8 +361,16 @@ export const searchExternalSources = async (
 export const getSourceBundle = async (
   term: string,
   source: ExternalSource,
-  name: string
+  name: string,
+  /** The SteamGridDB title: the cross-search may have used it instead. */
+  fallbackTerm?: string
 ): Promise<ExternalAsset[]> => {
-  const assets = await searchExternalSources(term);
-  return assets.filter((asset) => asset.source === source && asset.name === name);
+  const collect = (assets: ExternalAsset[]) => assets.filter(
+    (asset) => asset.source === source && asset.name === name
+  );
+  const found = collect(await searchExternalSources(term));
+  if (found.length || !fallbackTerm) return found;
+  const alternate = fallbackTerm.trim();
+  if (!alternate || alternate.toLowerCase() === (term || '').trim().toLowerCase()) return found;
+  return collect(await searchExternalSources(alternate));
 };

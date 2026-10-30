@@ -6,6 +6,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useRef,
   ReactNode,
 } from 'react';
 import { showModal } from '@decky/ui';
@@ -101,6 +102,9 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
     );
   }, [appId, appOverview.display_name, searchGames, set, selectExternalName]);
 
+  const searchSeq = useRef(0);
+  const mappingSeq = useRef(0);
+
   const searchAndSetAssets = useMemo(() => debounce(async (assetType, page, filters, onSuccess) => {
     // Shortcut without a matched SGDB game: nothing to request here, but the
     // cross-source section still has to be rendered.
@@ -111,6 +115,9 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
     }
     if (abortCont) abortCont?.abort();
     abortCont = new AbortController();
+    // A newer search (another tab, another game) must win over this answer.
+    const requestId = ++searchSeq.current;
+    const stale = () => searchSeq.current !== requestId;
 
     try {
       setCurrentFilters(filters);
@@ -121,6 +128,7 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
         filters,
         signal: abortCont.signal,
       });
+      if (stale()) return;
 
       // Nothing matched: retry once with every style/dimension/mime enabled
       // before telling the user the game has no artwork at all.
@@ -132,6 +140,7 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
           filters: relaxedFilters,
           signal: abortCont.signal,
         });
+        if (stale()) return;
         if (relaxed.length > 0) {
           resp = relaxed;
           setCurrentFilters(relaxedFilters);
@@ -148,7 +157,6 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
       setAssets(resp);
       setEndReached(false);
       setPage(page + 1); // set to next page so correct page is requested when loadMore() is used
-      onSuccess?.();
     } catch (err: any) {
       if (err.name === 'AbortError') {
         log('Search Aborted');
@@ -164,6 +172,10 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
           set(`nonsteam_${appId}`, false);
         }
       }
+    } finally {
+      // The tab must leave its spinner even when the request failed: the old
+      // code only cleared it on success, so an SGDB error froze the tab.
+      onSuccess?.();
     }
   }, 500), [appId, appOverview, searchAssets, showGameSelection, selectedGame, set]) as AssetSearchContextType['searchAndSetAssets'];
 
@@ -174,6 +186,7 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
 
     if (assets.length === 0) return;
 
+    const requestId = ++searchSeq.current;
     try {
       setMoreLoading(true);
       const resp = await searchAssets(assetType, {
@@ -182,9 +195,9 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
         filters: currentFilters,
         signal: abortCont.signal,
       });
+      if (searchSeq.current !== requestId) return;
       log('search load more resp', resp);
       setAssets((assets) => [...assets, ...resp]);
-      setMoreLoading(false);
       if (resp.length > 0) {
         setPage((x) => x + 1);
       }
@@ -202,6 +215,9 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
           icon: <MenuIcon fill="#f3171e" />,
         });
       }
+    } finally {
+      // A failed page must not leave the "loading more" spinner running.
+      setMoreLoading(false);
     }
   }, 500), [appOverview, assets.length, currentFilters, page, searchAssets, selectedGame]);
 
@@ -252,10 +268,15 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     if (!appOverview) return;
+    // Switching games quickly must not let the mapping of the previous one
+    // land on the new game's state.
+    const requestId = ++mappingSeq.current;
+    const alive = () => mappingSeq.current === requestId;
     (async () => {
       setLoading(true);
       const savedGame = await get(`nonsteam_${appId}`, false);
       const savedExternalTerm = await get(`external_name_${appId}`, null);
+      if (!alive()) return;
       if (savedExternalTerm) setExternalTerm(savedExternalTerm);
 
       // Older versions stored the first fuzzy hit even when it was a totally
@@ -271,6 +292,7 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
       } else {
         if (appOverview.BIsModOrShortcut()) {
           const gameRes = await searchGames(appOverview.display_name);
+          if (!alive()) return;
           const bestMatch = pickBestMatch(appOverview.display_name, gameRes);
           if (bestMatch) {
             setSelectedGame(bestMatch);
@@ -280,16 +302,22 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
           }
         }
       }
-      setLoading(false);
+      if (alive()) setLoading(false);
     })();
   }, [appOverview, appId, get, searchGames, set, showGameSelection]);
 
   useEffect(() => {
     if (!selectedGame) return;
+    let alive = true;
     (async () => {
       const sgdbGame = await getSgdbGame(selectedGame);
-      setExternalSgdbData(sgdbGame.external_platform_data);
+      if (alive && sgdbGame?.external_platform_data) {
+        setExternalSgdbData(sgdbGame.external_platform_data);
+      }
     })();
+    return () => {
+      alive = false;
+    };
   }, [getSgdbGame, selectedGame]);
 
   const value = useMemo(() => ({

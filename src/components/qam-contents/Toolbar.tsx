@@ -120,12 +120,20 @@ const Toolbar = forwardRef(({
     onSizeChange?.(assetSizeStyleAttr);
   }, [assetSizeStyleAttr, onSizeChange]);
 
-  // Set initial slider value from config or default
+  // Set initial slider value from config or default. The value is clamped to
+  // the tab's range: a saved size of another tab (hero is 2..4, logo 2..6)
+  // would otherwise make the grid template percentage negative.
   useEffect(() => {
+    let alive = true;
     (async () => {
       const defSize = await get(`zoomlevel_${assetType}`, defaultSliderSizes[assetType]);
-      setSliderValue(defSize);
+      if (!alive) return;
+      const { min, max } = sliderProps[assetType];
+      setSliderValue(Math.min(Math.max(Number(defSize) || defaultSliderSizes[assetType], min), max));
     })();
+    return () => {
+      alive = false;
+    };
   }, [assetType, get]);
 
   if (disabled) return null;
@@ -145,7 +153,7 @@ const Toolbar = forwardRef(({
         {(
           externalSgdbData &&
           Object.keys(externalSgdbData).length !== 0 &&
-          externalSgdbData?.steam[0]?.metadata[defaultAssetMap[assetType]]
+          externalSgdbData?.steam?.[0]?.metadata?.[defaultAssetMap[assetType]]
         ) && (
           <DialogButton
             noFocusRing

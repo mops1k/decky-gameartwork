@@ -11,8 +11,10 @@ if (!fs.existsSync(INPUT_PATH)) {
 
 const content = fs.readFileSync(INPUT_PATH, 'utf8');
 
-const matches = content.matchAll(/(?<![A-z\d])trans_string\('(.+?)', ?'(.+?)'\)/g);
-const steamMatchesArr = Array.from(content.matchAll(/(?<![A-z\d])trans_string\('([^']+)', ?'([^']+)', ?(?:true|1)\)/g));
+// A-z is a trap: it also covers [ \ ] ^ _ ` so a call inside an array or an
+// object literal was skipped (LABEL_UPDATE_INSTALLED never reached strings.json).
+const matches = content.matchAll(/(?<![A-Za-z\d_])trans_string\('(.+?)', ?'(.+?)'\)/g);
+const steamMatchesArr = Array.from(content.matchAll(/(?<![A-Za-z\d_])trans_string\('([^']+)', ?'([^']+)', ?(?:true|1)\)/g));
 const steamMatchesFlat = steamMatchesArr.map((x) => x[1]);
 
 const strings = {};

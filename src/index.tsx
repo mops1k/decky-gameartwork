@@ -11,6 +11,7 @@ import { removeSquareLibraryPatch, addSquareLibraryPatch } from './patches/squar
 import { removeHomePatch, addHomePatch } from './patches/homePatch';
 import { addCapsuleGlowPatch } from './patches/capsuleGlowPatch';
 import { removeStyles } from './utils/styleInjector';
+import log from './utils/log';
 
 export default definePlugin(() => {
   const getSetting = async (key: string, fallback: any): Promise<any> => {
@@ -39,11 +40,11 @@ export default definePlugin(() => {
       }
       addHomePatch(true, squares, uniformFeatured);
     }
-  });
+  }).catch((err) => log('cannot read the square/uniform settings', err));
 
   getSetting('capsule_glow_amount', 100).then((amount) => {
-    addCapsuleGlowPatch(parseInt(amount, 10));
-  });
+    addCapsuleGlowPatch(parseInt(amount, 10) || 100);
+  }).catch((err) => log('cannot read the capsule glow setting', err));
 
   return {
     title: <div className={quickAccessMenuClasses.Title}>GameArtwork</div>,

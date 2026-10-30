@@ -90,6 +90,9 @@ const FiltersModal: FC<{
     setHumor(true);
     setEpilepsy(true);
     setUntagged(true);
+    // NSFW is a filter too: "Reset" has to switch it off as well.
+    setAdult(false);
+    setAdultActivated(false);
   };
 
   return (
