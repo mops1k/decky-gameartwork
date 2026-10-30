@@ -21,10 +21,22 @@ Browse and apply game artwork from several sources without leaving Gaming Mode:
 
 - **Cross-source search** — a single query looks up the game in Steam, Epic Games
   Store, GOG and VNDB, and shows each store's official art next to the SGDB grid.
+  Each store publishes its tiles as soon as it answers, so a slow store never
+  holds back the rest.
+- **Full store artwork** — GOG is queried through its catalog API (portrait and
+  wide capsules, logo, background), Steam logos come from the app logo PNG, and
+  VNDB screenshots fill the wide/hero slots, so every tab has something to show.
 - **Store matching** — the plugin matches the shortcut/library title against store
   search results and applies a confidence check, so "Hollow Knight: Voidheart"
   still resolves to the right game. A localized or renamed shortcut falls back to
   the SteamGridDB title.
+- **Source filter** — chips above the grid keep only the artwork of one store.
+- **Batch apply** — the details dialog of a store tile can apply every artwork
+  that store has for the game (capsule, wide capsule, hero, logo, icon) at once.
+- **Applied marker** — tiles that are currently set as the game artwork are
+  marked, based on what the plugin applied and Steam's custom-artwork files.
+- **Per-source switches** — each store can be turned off in the Quick Access
+  settings, so requests and tiles only come from sources you care about.
 - **IGDB support** (optional) — console and indie games that are missing from the
   stores can be pulled from IGDB with your own Twitch API credentials.
 - **Manual Steam AppID** — if a store search finds nothing, paste a Steam AppID
@@ -80,6 +92,8 @@ The plugin works without any keys for SteamGridDB, Steam, Epic, GOG and VNDB.
 
 - **SteamGridDB API key** — add it in the plugin's Quick Access settings if SGDB
   requests are rate-limited or rejected.
+- **Artwork sources** — the *Artwork Sources* section of the plugin settings turns
+  the Steam / Epic / GOG / IGDB / VNDB lookups on and off individually.
 - **IGDB (optional)** — register an application at
   [dev.twitch.tv](https://dev.twitch.tv/console/apps) and paste its *Client ID*
   and *Client Secret* into the **IGDB** section of the plugin settings.

@@ -4,7 +4,7 @@ import json
 import re
 import time
 from platform import system
-from os.path import dirname
+
 from os import W_OK, access, stat
 from stat import FILE_ATTRIBUTE_HIDDEN
 from urllib.request import Request, urlopen
@@ -21,25 +21,54 @@ WINDOWS = system() == "Windows"
 STEAM_ASSET_BASE = "https://shared.steamstatic.com/store_item_assets/"
 STEAM_ICON_BASE = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/"
 
-def get_json(url: str, params=None, timeout: int = 15):
+def get_json(url: str, params=None, timeout: int = 15, retries: int = 1):
     if params:
         url = "%s?%s" % (url, urlencode(params))
     req = Request(url, headers={
         "User-Agent": "gameartwork backend",
         "Accept": "application/json",
     })
-    with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
-        return json.loads(res.read().decode("utf-8"))
+    attempt = 0
+    while True:
+        try:
+            with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except Exception:
+            # Catalog APIs (GOG especially) answer 503 now and then: one retry
+            # is enough to hide the blip without delaying real failures.
+            if attempt >= retries:
+                raise
+            attempt += 1
+            time.sleep(1.5)
 
-def get_html(url: str, timeout: int = 25):
+def get_html(url: str, timeout: int = 25, retries: int = 0):
     req = Request(url, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) gameartwork",
         "Accept-Language": "en-US,en;q=0.9",
     })
-    with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
-        return res.status, res.read().decode("utf-8", "replace")
+    attempt = 0
+    while True:
+        try:
+            with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+                return res.status, res.read().decode("utf-8", "replace")
+        except Exception:
+            if attempt >= retries:
+                raise
+            attempt += 1
+            time.sleep(1.5)
+
+def http_status(url: str, timeout: int = 8):
+    """Status code of a HEAD request, or None when the URL is unreachable."""
+    try:
+        req = Request(url, method="HEAD", headers={"User-Agent": "gameartwork backend"})
+        with urlopen(req, context=get_ssl_context(), timeout=timeout) as res:
+            return res.status
+    except Exception:
+        return None
 
 GOG_GENERIC_TITLES = ("Лучшие видеоигры", "Best video games", "GOG.COM")
+GOG_CATALOG_URL = "https://catalog.gog.com/v1/catalog"
+GOG_SCREENSHOT_FORMATTER = "product_card_v2_mobile_slider_639"
 
 def gog_slug_candidates(name: str):
     def slugify(value):
@@ -59,6 +88,93 @@ def clean_gog_title(title: str):
     title = re.sub(r"\s+\d+% off.*$", "", title, flags=re.I)
     title = re.sub(r"\s+на GOG\.com$", "", title, flags=re.I)
     return title.strip()
+
+def gog_product_images(product):
+    """Map one GOG catalog product to the asset types the plugin knows."""
+    images = {}
+    vertical = product.get("coverVertical") or ""
+    if vertical:
+        images["grid_p"] = {"url": vertical, "width": 342, "height": 482}
+
+    screenshots = [
+        url.replace("{formatter}", GOG_SCREENSHOT_FORMATTER)
+        for url in (product.get("screenshots") or [])
+        if url
+    ]
+
+    horizontal = product.get("coverHorizontal") or ""
+    if horizontal:
+        images["grid_l"] = {"url": horizontal, "width": 1600, "height": 740}
+    elif screenshots:
+        images["grid_l"] = {"url": screenshots[0], "width": 639, "height": 361}
+
+    background = product.get("galaxyBackgroundImage") or ""
+    if background:
+        images["hero"] = {"url": background, "width": 2560, "height": 670}
+    elif len(screenshots) > 1:
+        images["hero"] = {"url": screenshots[1], "width": 639, "height": 361}
+
+    logo = product.get("logo") or ""
+    if logo:
+        images["logo"] = {"url": logo, "width": 1600, "height": 740}
+    return images
+
+def gog_catalog_games(term: str, limit: int = 8):
+    """Search GOG through its public catalog API (no key, real title search)."""
+    data = get_json(GOG_CATALOG_URL, {
+        "limit": limit,
+        "page": 1,
+        "countryCode": "US",
+        "locale": "en-US",
+        "query": "like:%s" % term,
+    }, timeout=25, retries=1)
+    games = []
+    for product in (data.get("products") or []):
+        # Soundtracks and cosmetics are noise: only games and packs carry artwork.
+        if product.get("productType") not in (None, "game", "pack"):
+            continue
+        name = (product.get("title") or "").strip()
+        images = gog_product_images(product)
+        if not name or not images:
+            continue
+        games.append({
+            "id": str(product.get("id") or product.get("slug") or name),
+            "name": name,
+            "slug": product.get("slug"),
+            "images": images,
+        })
+    return games
+
+def gog_slug_games(term: str):
+    """Legacy fallback: guess the game page slug and read its og:image."""
+    games = []
+    seen = set()
+    for slug in gog_slug_candidates(term):
+        if slug in seen:
+            continue
+        seen.add(slug)
+        for prefix in ("en", "ru"):
+            try:
+                status, body = get_html("https://www.gog.com/%s/game/%s" % (prefix, slug))
+            except Exception as exc:
+                decky.logger.info("[gameartwork] gog %s/%s failed: %s" % (prefix, slug, exc))
+                continue
+            title_match = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', body)
+            image_match = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]*)"', body)
+            if not title_match or not image_match:
+                continue
+            name = clean_gog_title(html.unescape(title_match.group(1)))
+            if not name or any(generic in name for generic in GOG_GENERIC_TITLES):
+                continue  # redirected to the catalog page: no such game
+            games.append({
+                "id": slug,
+                "name": name,
+                "images": {
+                    "grid_l": {"url": image_match.group(1), "width": 1600, "height": 740},
+                },
+            })
+            break
+    return games
 
 IGDB_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 IGDB_GAMES_URL = "https://api.igdb.com/v4/games"
@@ -272,6 +388,9 @@ class Plugin:
             return None
 
         community_icon = assets.get("community_icon")
+        # The store API has no logo field, but Steam ships a transparent logo
+        # PNG next to the app assets. Not every game has one, hence the HEAD.
+        logo_url = "https://cdn.cloudflare.steamstatic.com/steam/apps/%s/logo.png" % appid
         result = {
             "appid": appid,
             "name": item.get("name") or "",
@@ -290,6 +409,11 @@ class Plugin:
                     "url": asset_url("library_hero_2x", "library_hero", "hero_capsule_2x", "hero_capsule"),
                     "width": 1920,
                     "height": 620,
+                },
+                "logo": {
+                    "url": logo_url if http_status(logo_url, timeout=6) == 200 else None,
+                    "width": 640,
+                    "height": 160,
                 },
                 "icon": {
                     "url": ("%s%s/%s.jpg" % (STEAM_ICON_BASE, appid, community_icon)) if community_icon else None,
@@ -330,18 +454,38 @@ class Plugin:
         decky.logger.info("[gameartwork] epic elements %r -> %d" % (term, len(elements)))
         games = []
         for element in elements:
-            images = {}
+            by_type = {}
             for image in element.get("keyImages") or []:
-                image_type = image.get("type")
                 url = image.get("url") or ""
+                # Video entries (heroCarouselVideo) are qs:// links, not images.
                 if not url.startswith("https://"):
                     continue
-                if image_type == "OfferImageTall":
-                    images["grid_p"] = {"url": url, "width": 1200, "height": 1600}
-                elif image_type == "OfferImageWide":
-                    images["grid_l"] = {"url": url, "width": 1920, "height": 1080}
-                elif image_type == "Thumbnail":
-                    images["icon"] = {"url": url, "width": 480, "height": 480}
+                by_type.setdefault(image.get("type"), []).append(url)
+
+            def first(*image_types):
+                for image_type in image_types:
+                    urls = by_type.get(image_type) or []
+                    if urls:
+                        return urls[0]
+                return None
+
+            images = {}
+            tall = first("OfferImageTall", "DieselStoreFrontTall", "DieselGameBoxTall", "CodeRedemption_340x440")
+            if tall:
+                images["grid_p"] = {"url": tall, "width": 1200, "height": 1600}
+            wide = first("OfferImageWide", "DieselStoreFrontWide", "ESGalleryLandscape")
+            if wide:
+                images["grid_l"] = {"url": wide, "width": 1920, "height": 1080}
+            logo = first("ProductLogo")
+            if logo:
+                images["logo"] = {"url": logo, "width": 350, "height": 100}
+            # featuredMedia carries the carousel key art and gameplay shots.
+            hero = first("featuredMedia", "ESGalleryLandscape") or wide
+            if hero:
+                images["hero"] = {"url": hero, "width": 1920, "height": 1080}
+            icon = first("Thumbnail", "OfferImageTall")
+            if icon:
+                images["icon"] = {"url": icon, "width": 480, "height": 480}
             if not images:
                 continue
             games.append({
@@ -365,7 +509,7 @@ class Plugin:
         try:
             data = post_json("https://api.vndb.org/kana/vn", {
                 "filters": ["search", "=", term],
-                "fields": "id,title,image.url",
+                "fields": "id,title,image.url,screenshots.url",
                 "results": 10,
             })
         except Exception as exc:
@@ -377,16 +521,24 @@ class Plugin:
             url = image.get("url")
             if not url:
                 continue
+            images = {
+                "grid_p": {
+                    "url": url,
+                    "width": 600,
+                    "height": 900,
+                },
+            }
+            # VN screenshots are 16:9: the first one makes a usable hero, the
+            # second one a wide capsule, so the store grid is not empty.
+            shots = [shot.get("url") for shot in (item.get("screenshots") or []) if shot.get("url")]
+            if shots:
+                images["hero"] = {"url": shots[0], "width": 1280, "height": 720}
+            if len(shots) > 1:
+                images["grid_l"] = {"url": shots[1], "width": 1280, "height": 720}
             games.append({
                 "id": item.get("id"),
                 "name": item.get("title") or "",
-                "images": {
-                    "grid_p": {
-                        "url": url,
-                        "width": 0,
-                        "height": 0,
-                    },
-                },
+                "images": images,
             })
         decky.logger.info("[gameartwork] vndb search %r -> %d" % (term, len(games)))
         return self._cache_set(key, games)
@@ -475,7 +627,7 @@ class Plugin:
         return self._cache_set(key, games)
 
     async def gog_search_games(self, term=''):
-        """GOG has no public search API: match the title against the game page slug."""
+        """Search GOG through the catalog API; fall back to page slug parsing."""
         term = (term or '').strip()
         if not term:
             return []
@@ -485,39 +637,21 @@ class Plugin:
             return cached
 
         games = []
-        seen = set()
-        for slug in gog_slug_candidates(term):
-            if slug in seen:
-                continue
-            seen.add(slug)
-            for prefix in ("en", "ru"):
-                try:
-                    status, body = get_html("https://www.gog.com/%s/game/%s" % (prefix, slug))
-                except Exception as exc:
-                    decky.logger.info("[gameartwork] gog %s/%s failed: %s" % (prefix, slug, exc))
-                    continue
-                title_match = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', body)
-                image_match = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]*)"', body)
-                if not title_match or not image_match:
-                    continue
-                name = clean_gog_title(html.unescape(title_match.group(1)))
-                if not name or any(generic in name for generic in GOG_GENERIC_TITLES):
-                    continue  # redirected to the catalog page: no such game
-                games.append({
-                    "id": slug,
-                    "name": name,
-                    "images": {
-                        "grid_l": {"url": image_match.group(1), "width": 1600, "height": 740},
-                    },
-                })
-                break
+        try:
+            games = gog_catalog_games(term)
+        except Exception as exc:
+            decky.logger.warning("[gameartwork] gog catalog failed: %s" % exc)
+        if not games:
+            games = gog_slug_games(term)
 
         decky.logger.info("[gameartwork] gog search %r -> %d" % (term, len(games)))
         return self._cache_set(key, games)
 
     async def download_as_base64(self, url=''):
-        req = Request(url, headers={'User-Agent': 'decky-steamgriddb backend'})
-        content = urlopen(req, context=get_ssl_context()).read()
+        # A stuck CDN must not block applying artwork forever.
+        req = Request(url, headers={'User-Agent': 'gameartwork backend'})
+        with urlopen(req, context=get_ssl_context(), timeout=30) as res:
+            content = res.read()
         return b64encode(content).decode('utf-8')
 
     async def read_file_as_base64(self, path=''):
@@ -528,20 +662,49 @@ class Plugin:
         return decky.DECKY_USER_HOME
 
     async def download_file(self, url='', output_dir='', file_name=''):
-        decky.logger.debug({url, output_dir, file_name})
+        decky.logger.debug((url, output_dir, file_name))
         try:
-            if access(dirname(output_dir), W_OK):
-                req = Request(url, headers={'User-Agent': 'decky-steamgriddb backend'})
-                res = urlopen(req, context=get_ssl_context())
-                if res.status == 200:
-                    with open(Path(output_dir) / file_name, mode='wb') as f:
-                        f.write(res.read())
-                    return str(Path(output_dir) / file_name)
-                return False
-        except:
-            return False
-
+            if access(output_dir, W_OK):
+                req = Request(url, headers={'User-Agent': 'gameartwork backend'})
+                with urlopen(req, context=get_ssl_context(), timeout=30) as res:
+                    if res.status != 200:
+                        return False
+                    content = res.read()
+                with open(Path(output_dir) / file_name, mode='wb') as f:
+                    f.write(content)
+                return str(Path(output_dir) / file_name)
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] download failed for %s: %s' % (url, exc))
         return False
+
+    async def custom_artwork_state(self, appid, owner_id):
+        """Which artwork types already have a custom file in Steam's grid dir.
+
+        Steam has no API to read custom artwork, so the presence of the files
+        it writes next to shortcuts is the only reliable signal: <appid>.png
+        is the wide capsule, <appid>p.png the portrait one, and the rest use
+        type suffixes.
+        """
+        try:
+            appid = int(appid)
+        except (TypeError, ValueError):
+            return {}
+        grid_dir = get_userdata_config(str(owner_id)) / 'grid'
+        try:
+            names = {entry.name for entry in grid_dir.iterdir()}
+        except Exception:
+            return {}
+        suffixes = {
+            'grid_p': ('p.png', 'p.jpg', 'p.jpeg', 'p.webp'),
+            'grid_l': ('.png', '.jpg', '.jpeg', '.webp'),
+            'hero': ('_hero.png', '_hero.jpg', '_hero.jpeg', '_hero.webp'),
+            'logo': ('_logo.png', '_logo.jpg', '_logo.jpeg', '_logo.webp'),
+            'icon': ('_icon.png', '_icon.jpg', '_icon.ico', '_icon.jpeg'),
+        }
+        return {
+            asset_type: any(('%s%s' % (appid, suffix)) in names for suffix in type_suffixes)
+            for asset_type, type_suffixes in suffixes.items()
+        }
 
     async def set_shortcut_icon_from_path(self, appid, owner_id, path):
         ext = Path(path).suffix

@@ -101,5 +101,13 @@
   "ACTION_UPDATE_CHECKING": "Проверка…",
   "ACTION_UPDATE_WHATS_NEW": "Что нового",
   "LABEL_UPDATE_WHATS_NEW": "Что нового в v{version}",
-  "MSG_UPDATE_NO_NOTES": "В этом релизе нет описания."
+  "MSG_UPDATE_NO_NOTES": "В этом релизе нет описания.",
+  "LABEL_APPLIED": "Применено",
+  "LABEL_SOURCE_ALL": "Все",
+  "MSG_LOADING_SOURCES": "Загрузка источников...",
+  "ACTION_APPLY_BUNDLE": "Применить весь набор от {source}",
+  "MSG_BUNDLE_APPLIED": "Применено: {list}",
+  "MSG_BUNDLE_EMPTY": "У этого источника нет другого арта для игры.",
+  "LABEL_SOURCES_TITLE": "Источники арта",
+  "LABEL_SOURCES_DESC": "Какие магазины опрашиваются вместе со SteamGridDB. Отключите источник, чтобы не тратить на него запросы."
 }

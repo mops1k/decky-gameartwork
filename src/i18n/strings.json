@@ -91,5 +91,13 @@
   "LABEL_OTHER_SOURCES": "Other sources",
   "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
   "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
-  "LABEL_IGDB_HINT": "Optional: enables IGDB artwork for console and indie games. Create an app at dev.twitch.tv → Register Your Application."
+  "LABEL_IGDB_HINT": "Optional: enables IGDB artwork for console and indie games. Create an app at dev.twitch.tv → Register Your Application.",
+  "LABEL_APPLIED": "Applied",
+  "LABEL_SOURCE_ALL": "All",
+  "MSG_LOADING_SOURCES": "Loading sources...",
+  "ACTION_APPLY_BUNDLE": "Apply all from {source}",
+  "MSG_BUNDLE_APPLIED": "Applied: {list}",
+  "MSG_BUNDLE_EMPTY": "This source has no other artwork for the game.",
+  "LABEL_SOURCES_TITLE": "Artwork Sources",
+  "LABEL_SOURCES_DESC": "Which stores are searched for artwork next to SteamGridDB. Turn off a source to skip its requests."
 }

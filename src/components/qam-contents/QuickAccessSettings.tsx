@@ -24,6 +24,7 @@ import { addSquareLibraryPatch, removeSquareLibraryPatch } from '../../patches/s
 import { addCapsuleGlowPatch } from '../../patches/capsuleGlowPatch';
 import { DIMENSIONS } from '../../constants';
 import { appgridClasses } from '../../static-classes';
+import { ALL_SOURCES, ExternalSource, SOURCE_NAMES, invalidateEnabledSources } from '../../utils/providers';
 
 import GuideVideoField from './GuideVideoField';
 import UpdateSection from './UpdateSection';
@@ -61,6 +62,21 @@ const QuickAccessSettings: VFC = () => {
   const [debugAppid] = useState('70');
   const [igdbClientId, setIgdbClientId] = useState('');
   const [igdbClientSecret, setIgdbClientSecret] = useState('');
+  const [sourcesEnabled, setSourcesEnabled] = useState<Record<ExternalSource, boolean>>({
+    steam: true,
+    epic: true,
+    gog: true,
+    igdb: true,
+    vndb: true,
+  });
+
+  const handleSourceToggle = useCallback((source: ExternalSource, value: boolean) => {
+    const next = { ...sourcesEnabled, [source]: value };
+    setSourcesEnabled(next);
+    set('sources_enabled', next, true);
+    // The cross-search caches the switches for a few seconds: drop that copy.
+    invalidateEnabledSources();
+  }, [set, sourcesEnabled]);
 
   const handleIgdbClientId = useCallback((value: string) => {
     setIgdbClientId(value);
@@ -119,6 +135,16 @@ const QuickAccessSettings: VFC = () => {
       setMotdToggle(await get('motd_hidden_global', false));
       setIgdbClientId(await get('igdb_client_id', ''));
       setIgdbClientSecret(await get('igdb_client_secret', ''));
+      const storedSources = await get('sources_enabled', null);
+      if (storedSources && typeof storedSources === 'object') {
+        setSourcesEnabled((prev) => {
+          const next = { ...prev };
+          for (const source of ALL_SOURCES) {
+            if (typeof storedSources[source] === 'boolean') next[source] = storedSources[source];
+          }
+          return next;
+        });
+      }
     })();
   }, [get]);
 
@@ -209,6 +235,22 @@ const QuickAccessSettings: VFC = () => {
           </PanelSectionRow>
         </PanelSection>
       )}
+      <PanelSection title={t('LABEL_SOURCES_TITLE', 'Artwork Sources')}>
+        <PanelSectionRow>
+          <div style={{ fontSize: '12px', padding: '4px 0' }}>
+            {t('LABEL_SOURCES_DESC', 'Which stores are searched for artwork next to SteamGridDB. Turn off a source to skip its requests.')}
+          </div>
+        </PanelSectionRow>
+        {ALL_SOURCES.map((source) => (
+          <PanelSectionRow key={source}>
+            <ToggleField
+              label={SOURCE_NAMES[source]}
+              checked={sourcesEnabled[source]}
+              onChange={(value) => handleSourceToggle(source, value)}
+            />
+          </PanelSectionRow>
+        ))}
+      </PanelSection>
       <PanelSection title="IGDB">
         <PanelSectionRow>
           <Field

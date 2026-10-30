@@ -2,6 +2,7 @@ import { VFC } from 'react';
 import { SiEpicgames, SiIgdb, SiSteam } from 'react-icons/si';
 
 import { ExternalSource } from '../utils/providers';
+
 import GogIcon from './Icons/GogIcon';
 
 const SgdbGlyph: VFC<{ size?: string }> = ({ size = '1em' }) => (

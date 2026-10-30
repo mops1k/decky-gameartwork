@@ -352,3 +352,40 @@
     opacity: 1;
   }
 }
+
+#sgdb-wrap {
+  .source-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4em;
+    margin: .5em 0;
+    .source-filter-chip {
+      @include mixins.flex-center;
+      gap: .4em;
+      padding: .3em .7em;
+      border-radius: 5px;
+      background: rgba(#fff, .08);
+      font-size: .8em;
+      white-space: nowrap;
+      transition: background variables.$easeOutCubic 150ms;
+      &.active {
+        background: #1a9fff;
+        color: #fff;
+      }
+      &.gpfocus {
+        outline: 2px solid #fff;
+      }
+      .count {
+        opacity: .6;
+        font-size: .9em;
+      }
+    }
+  }
+  .source-loading {
+    justify-self: center;
+    opacity: .6;
+    font-size: .9em;
+    padding: .5em 0;
+  }
+}
+

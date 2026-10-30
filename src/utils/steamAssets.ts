@@ -1,4 +1,5 @@
 import { call } from '@decky/api';
+
 import log from './log';
 
 export type SteamApp = {

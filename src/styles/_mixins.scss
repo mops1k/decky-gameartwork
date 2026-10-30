@@ -161,6 +161,9 @@
       font-size: .65em;
       padding-top: .15em;
       margin-top: auto;
+      // Fixed row for every tile: store artwork has no author, and a missing
+      // row would shift the whole grid up and down.
+      min-height: 1.6em;
       overflow: hidden;
       z-index: 4 + variables.$zIndexAboveRing; // above blur
       text-shadow: 0px 1px 1px #000;

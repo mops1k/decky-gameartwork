@@ -6,6 +6,9 @@ import log from './log';
 
 export type ExternalSource = 'steam' | 'epic' | 'gog' | 'igdb' | 'vndb';
 
+/** Every built-in source, in the order their results are shown. */
+export const ALL_SOURCES: ExternalSource[] = ['steam', 'epic', 'gog', 'igdb', 'vndb'];
+
 export const SOURCE_NAMES: Record<ExternalSource, string> = {
   steam: 'Steam',
   epic: 'Epic',
@@ -13,6 +16,9 @@ export const SOURCE_NAMES: Record<ExternalSource, string> = {
   igdb: 'IGDB',
   vndb: 'VNDB',
 };
+
+export type SourceState = 'pending' | 'done' | 'error';
+export type ExternalSourcesState = Partial<Record<ExternalSource, SourceState>>;
 
 type ProviderImage = { url: string; width: number; height: number };
 
@@ -75,43 +81,59 @@ const searchSteam = async (term: string): Promise<ExternalAsset[]> => {
   return toAssets({ id: String(best.appid), name: app.name || best.name, images }, 'steam');
 };
 
-const searchEpic = async (term: string): Promise<ExternalAsset[]> => {
-  const games = await call<[string], ProviderGame[]>('epic_search_games', term).catch((err) => {
-    log('epic search failed', err);
-    return [] as ProviderGame[];
-  });
+const makeRemoteSearcher = (method: string, source: ExternalSource) => async (term: string): Promise<ExternalAsset[]> => {
+  const games = await call<[string], ProviderGame[]>(method, term);
   const best = pickBestMatch(term, games as any);
-  return best ? toAssets(best, 'epic') : [];
+  return best ? toAssets(best, source) : [];
 };
 
-const searchIgdb = async (term: string): Promise<ExternalAsset[]> => {
-  const games = await call<[string], ProviderGame[]>('igdb_search_games', term).catch((err) => {
-    log('igdb search failed', err);
-    return [] as ProviderGame[];
-  });
-  const best = pickBestMatch(term, games as any);
-  return best ? toAssets(best, 'igdb') : [];
+const SEARCHERS: Record<ExternalSource, (term: string) => Promise<ExternalAsset[]>> = {
+  steam: searchSteam,
+  epic: makeRemoteSearcher('epic_search_games', 'epic'),
+  gog: makeRemoteSearcher('gog_search_games', 'gog'),
+  igdb: makeRemoteSearcher('igdb_search_games', 'igdb'),
+  vndb: makeRemoteSearcher('vndb_search_games', 'vndb'),
 };
 
-const searchGog = async (term: string): Promise<ExternalAsset[]> => {
-  const games = await call<[string], ProviderGame[]>('gog_search_games', term).catch((err) => {
-    log('gog search failed', err);
-    return [] as ProviderGame[];
-  });
-  const best = pickBestMatch(term, games as any);
-  return best ? toAssets(best, 'gog') : [];
+const SOURCES_SETTING = 'sources_enabled';
+const SOURCES_CACHE_TTL = 3000;
+const RESULT_CACHE_TTL = 10 * 60 * 1000;
+
+type EnabledSources = Record<ExternalSource, boolean>;
+
+let enabledSourcesCache: { at: number; value: EnabledSources } | null = null;
+
+/** Per-source switches from the Quick Access settings (all on by default). */
+export const getEnabledSources = async (): Promise<EnabledSources> => {
+  if (enabledSourcesCache && Date.now() - enabledSourcesCache.at < SOURCES_CACHE_TTL) {
+    return enabledSourcesCache.value;
+  }
+  let stored: any = null;
+  try {
+    stored = await call<[string, any], any>('get_setting', SOURCES_SETTING, null);
+  } catch (err) {
+    log('read sources_enabled failed', err);
+  }
+  const value = {} as EnabledSources;
+  for (const source of ALL_SOURCES) {
+    value[source] = typeof stored?.[source] === 'boolean' ? stored[source] : true;
+  }
+  enabledSourcesCache = { at: Date.now(), value };
+  return value;
 };
 
-const searchVndb = async (term: string): Promise<ExternalAsset[]> => {
-  const games = await call<[string], ProviderGame[]>('vndb_search_games', term).catch((err) => {
-    log('vndb search failed', err);
-    return [] as ProviderGame[];
-  });
-  const best = pickBestMatch(term, games as any);
-  return best ? toAssets(best, 'vndb') : [];
+/** Called after the settings toggle so the next search re-reads the switches. */
+export const invalidateEnabledSources = () => {
+  enabledSourcesCache = null;
 };
 
-const cache = new Map<string, ExternalAsset[]>();
+export type ExternalSearchProgress = {
+  assets: ExternalAsset[];
+  sources: ExternalSourcesState;
+  enabled: ExternalSource[];
+};
+
+const resultCache = new Map<string, { at: number; assets: ExternalAsset[]; enabled: ExternalSource[] }>();
 const titleCache = new Map<string, ExternalTitle[]>();
 
 export type ExternalTitle = { source: ExternalSource; name: string };
@@ -124,12 +146,13 @@ export const searchExternalTitles = async (term: string): Promise<ExternalTitle[
   const cached = titleCache.get(cacheKey);
   if (cached) return cached;
 
+  const enabled = await getEnabledSources();
   const [steam, epic, gog, igdb, vndb] = await Promise.all([
-    searchSteamApps(query).catch(() => []),
-    call<[string], ProviderGame[]>('epic_search_games', query).catch(() => []),
-    call<[string], ProviderGame[]>('gog_search_games', query).catch(() => []),
-    call<[string], ProviderGame[]>('igdb_search_games', query).catch(() => []),
-    call<[string], ProviderGame[]>('vndb_search_games', query).catch(() => []),
+    enabled.steam ? searchSteamApps(query).catch(() => []) : [],
+    enabled.epic ? call<[string], ProviderGame[]>('epic_search_games', query).catch(() => []) : [],
+    enabled.gog ? call<[string], ProviderGame[]>('gog_search_games', query).catch(() => []) : [],
+    enabled.igdb ? call<[string], ProviderGame[]>('igdb_search_games', query).catch(() => []) : [],
+    enabled.vndb ? call<[string], ProviderGame[]>('vndb_search_games', query).catch(() => []) : [],
   ]);
 
   const titles: ExternalTitle[] = [
@@ -145,33 +168,87 @@ export const searchExternalTitles = async (term: string): Promise<ExternalTitle[
 };
 
 /**
- * Cross-search every built-in source at once. No per-source settings:
- * the user just opens the plugin and sees artwork from all of them.
+ * Cross-search the enabled sources. Each source publishes its tiles the moment
+ * it answers, so a slow store (GOG parses a full catalog response) does not
+ * hold back the fast ones.
  */
-export const searchExternalSources = async (term: string): Promise<ExternalAsset[]> => {
+const inFlight = new Map<string, Promise<ExternalAsset[]>>();
+
+export const searchExternalSources = async (
+  term: string,
+  onProgress?: (progress: ExternalSearchProgress) => void
+): Promise<ExternalAsset[]> => {
   const query = (term || '').trim();
   if (!query) return [];
   const cacheKey = query.toLowerCase();
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
 
-  const results = await Promise.allSettled([
-    searchSteam(query),
-    searchEpic(query),
-    searchGog(query),
-    searchIgdb(query),
-    searchVndb(query),
-  ]);
-  const assets: ExternalAsset[] = [];
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      assets.push(...result.value);
-    } else {
-      log('source search failed', result.reason);
-    }
+  const cached = resultCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < RESULT_CACHE_TTL) {
+    const sources: ExternalSourcesState = {};
+    cached.enabled.forEach((source) => { sources[source] = 'done'; });
+    onProgress?.({ assets: cached.assets, sources, enabled: cached.enabled });
+    return cached.assets;
   }
-  if (cache.size > 100) cache.clear();
-  cache.set(cacheKey, assets);
-  call('log_debug', `cross-search "${query}": ${assets.length} asset(s) from ${[...new Set(assets.map((a) => a.source))].join(', ') || 'none'}`).catch(() => undefined);
-  return assets;
+
+  // Several asset tabs ask for the same game at once: share one request.
+  const pending = inFlight.get(cacheKey);
+  if (pending) {
+    const assets = await pending.catch(() => [] as ExternalAsset[]);
+    const enabledSwitches = await getEnabledSources();
+    const sources: ExternalSourcesState = {};
+    ALL_SOURCES.filter((source) => enabledSwitches[source]).forEach((source) => { sources[source] = 'done'; });
+    onProgress?.({ assets, sources, enabled: ALL_SOURCES.filter((source) => enabledSwitches[source]) });
+    return assets;
+  }
+
+  const run = async (): Promise<ExternalAsset[]> => {
+    const enabledSwitches = await getEnabledSources();
+    const enabled = ALL_SOURCES.filter((source) => enabledSwitches[source]);
+    if (!enabled.length) return [];
+
+    const collected: ExternalAsset[] = [];
+    const sources: ExternalSourcesState = {};
+    enabled.forEach((source) => { sources[source] = 'pending'; });
+    onProgress?.({ assets: [], sources: { ...sources }, enabled });
+
+    await Promise.all(enabled.map(async (source) => {
+      try {
+        const result = await SEARCHERS[source](query);
+        collected.push(...result);
+        sources[source] = 'done';
+      } catch (err) {
+        // One dead source must not hide the others.
+        log(`source ${source} search failed`, err);
+        sources[source] = 'error';
+      }
+      onProgress?.({ assets: [...collected], sources: { ...sources }, enabled });
+    }));
+
+    const ordered = ALL_SOURCES.flatMap((source) => collected.filter((asset) => asset.source === source));
+    if (resultCache.size > 100) resultCache.clear();
+    resultCache.set(cacheKey, { at: Date.now(), assets: ordered, enabled });
+    call('log_debug', `cross-search "${query}": ${ordered.length} asset(s) from ${[...new Set(ordered.map((a) => a.source))].join(', ') || 'none'}`).catch(() => undefined);
+    return ordered;
+  };
+
+  const task = run();
+  inFlight.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    inFlight.delete(cacheKey);
+  }
+};
+
+/**
+ * Every asset one store has for a game: the batch apply source.
+ * Uses the same result cache, so opening the details modal costs nothing.
+ */
+export const getSourceBundle = async (
+  term: string,
+  source: ExternalSource,
+  name: string
+): Promise<ExternalAsset[]> => {
+  const assets = await searchExternalSources(term);
+  return assets.filter((asset) => asset.source === source && asset.name === name);
 };

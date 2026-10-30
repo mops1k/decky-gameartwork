@@ -21,9 +21,12 @@ export interface AssetProps extends FooterLegendProps, Omit<FocusableProps, 'chi
   scrollContainer?: Element;
   notes?: string;
   sourceName?: string;
+  /** Shown under the tile when the source has no author (store artwork). */
+  caption?: string;
   nsfw?: boolean;
   humor?: boolean;
   epilepsy?: boolean;
+  applied?: boolean;
   onImgError?: React.ReactEventHandler<HTMLImageElement>;
 }
 
@@ -39,9 +42,11 @@ const Asset: FC<AssetProps> = ({
   scrollContainer,
   notes = null,
   sourceName,
+  caption,
   nsfw,
   humor,
   epilepsy,
+  applied,
   onImgError,
   ...rest
 }) => (
@@ -54,6 +59,9 @@ const Asset: FC<AssetProps> = ({
     >
       <div className={joinClassNames('dload-overlay', isDownloading ? 'downloading' : '')}><img src={Spinner} /></div>
       <Chips>
+        {applied ? (
+          <Chip color="#2f9e44">{t('LABEL_APPLIED', 'Applied')}</Chip>
+        ) : null}
         {sourceName ? (
           <Chip color="#4e9ac6">{sourceName}</Chip>
         ) : null}
@@ -96,12 +104,18 @@ const Asset: FC<AssetProps> = ({
         onError={onImgError}
       />
     </Focusable>
-    {author && (
-      <div className="author">
-        <LazyImage src={author.avatar} alt="" />
-        <span>{author.name}</span>
-      </div>
-    )}
+    {/* Every tile keeps the caption row, otherwise store artwork without an
+        author makes the grid rows uneven. */}
+    <div className="author">
+      {author ? (
+        <>
+          <LazyImage src={author.avatar} alt="" />
+          <span>{author.name}</span>
+        </>
+      ) : caption ? (
+        <span>{caption}</span>
+      ) : null}
+    </div>
   </div>
 );
 
