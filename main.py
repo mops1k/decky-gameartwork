@@ -131,6 +131,27 @@ def read_plugin_version():
 def version_tuple(value):
     return tuple(int(part) for part in re.findall(r'\d+', value or '')[:3]) or (0,)
 
+def release_asset_url(version):
+    return 'https://github.com/%s/releases/download/v%s/GameArtwork-%s.zip' % (PLUGIN_REPO, version, version)
+
+def detect_latest_version():
+    """Resolve the latest release tag without the GitHub API.
+
+    Unauthenticated api.github.com allows 60 requests per hour per IP, and the
+    whole device shares one, so the API is not a reliable update source. The
+    web endpoint answers with a redirect to /releases/tag/<tag> and has no such
+    limit.
+    """
+    req = Request(
+        'https://github.com/%s/releases/latest' % PLUGIN_REPO,
+        method='HEAD',
+        headers={'User-Agent': 'gameartwork backend'},
+    )
+    with urlopen(req, context=get_ssl_context(), timeout=20) as res:
+        final_url = res.geturl() or ''
+    match = re.search(r'/releases/tag/([^/?#]+)', final_url)
+    return match.group(1).lstrip('vV') if match else ''
+
 class Plugin:
     CACHE_TTL = 6 * 60 * 60
 
@@ -602,11 +623,13 @@ class Plugin:
         now = time.time()
         if (
             not force
-            and isinstance(cached, dict) and cached.get('url')
+            and isinstance(cached, dict) and not cached.get('error')
             and now - float(cached.get('checked') or 0) < PLUGIN_UPDATE_TTL
         ):
             cached['current'] = current
             cached['available'] = version_tuple(cached.get('latest')) > version_tuple(current)
+            if not cached['available']:
+                cached['url'] = ''
             return cached
 
         info = {
@@ -619,29 +642,52 @@ class Plugin:
             'published_at': '',
             'checked': now,
         }
+        api_error = ''
+        release = None
         try:
             release = get_json(PLUGIN_UPDATE_URL, timeout=20)
         except Exception as exc:
-            decky.logger.warning('[gameartwork] update check failed: %s' % exc)
-            info['error'] = str(exc)
-            self.settings.setSetting(PLUGIN_UPDATE_SETTING, info)
-            return info
+            decky.logger.warning('[gameartwork] GitHub API update check failed: %s' % exc)
+            api_error = str(exc)
 
-        latest = str(release.get('tag_name') or '').strip().lstrip('vV')
-        asset = next((
-            item for item in (release.get('assets') or [])
-            if str(item.get('name') or '').startswith('GameArtwork-')
-            and str(item.get('name') or '').endswith('.zip')
-        ), None)
-        info.update({
-            'latest': latest or current,
-            'url': str((asset or {}).get('browser_download_url') or ''),
-            'size': int((asset or {}).get('size') or 0),
-            'notes': str(release.get('body') or ''),
-            'published_at': str(release.get('published_at') or ''),
-            'checked': now,
-        })
-        info['available'] = bool(info['url']) and version_tuple(info['latest']) > version_tuple(current)
+        checked_ok = False
+        if release:
+            latest = str(release.get('tag_name') or '').strip().lstrip('vV') or current
+            asset = next((
+                item for item in (release.get('assets') or [])
+                if str(item.get('name') or '').startswith('GameArtwork-')
+                and str(item.get('name') or '').endswith('.zip')
+            ), None)
+            info.update({
+                'latest': latest,
+                'url': str((asset or {}).get('browser_download_url') or '') or release_asset_url(latest),
+                'size': int((asset or {}).get('size') or 0),
+                'notes': str(release.get('body') or ''),
+                'published_at': str(release.get('published_at') or ''),
+            })
+            checked_ok = True
+        else:
+            # The API is rate limited or unreachable: fall back to the web redirect,
+            # which still gives us the version and therefore the release asset URL.
+            try:
+                latest = detect_latest_version() or current
+                info.update({'latest': latest, 'url': release_asset_url(latest)})
+                checked_ok = True
+            except Exception as exc:
+                decky.logger.warning('[gameartwork] release redirect update check failed: %s' % exc)
+                api_error = api_error or str(exc)
+
+        info['available'] = checked_ok and version_tuple(info['latest']) > version_tuple(current)
+        if not info['available']:
+            # Nothing to install: never offer a stale or irrelevant asset URL.
+            info['url'] = ''
+        if not checked_ok:
+            info['error'] = api_error or 'update check failed'
+            # Keep the last good answer instead of replacing it with a failure.
+            if isinstance(cached, dict) and cached.get('url'):
+                cached['current'] = current
+                cached['available'] = version_tuple(cached.get('latest')) > version_tuple(current)
+                return cached
         self.settings.setSetting(PLUGIN_UPDATE_SETTING, info)
         return info
 

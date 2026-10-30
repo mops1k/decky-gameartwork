@@ -1,13 +1,12 @@
 
 import { memo, useEffect, useState, FC } from 'react';
-import { Tabs, TabsProps, showModal } from '@decky/ui';
+import { Tabs, TabsProps } from '@decky/ui';
 
 import t from '../../utils/i18n';
 import useAssetSearch from '../../hooks/useAssetSearch';
 import useSGDB from '../../hooks/useSGDB';
 import { tabStrs, DEFAULT_TABS } from '../../constants';
 import useSettings from '../../hooks/useSettings';
-import BeggingModal from '../../modals/BeggingModal';
 
 import ManageTab from './ManageTab';
 import AssetTab from './AssetTab';
@@ -30,11 +29,6 @@ const AssetTabs: FC<{
       // Amount of times tabs page opened, used to hide tutorial after a while
       const useCount = await get('plugin_use_count', 0);
       set('plugin_use_count', useCount + 1, true);
-
-      // Donation message if plugin is used a lot
-      if ([15, 75, 200, 1337].includes(useCount)) {
-        showModal(<BeggingModal />);
-      }
     })();
   }, [get, set]);
 
