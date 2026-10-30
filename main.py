@@ -115,6 +115,22 @@ def get_steam_icon_name(icon_hash):
 def get_userdata_config(steam32):
     return get_steam_userdata() / steam32 / 'config'
 
+PLUGIN_REPO = 'mops1k/decky-gameartwork'
+PLUGIN_UPDATE_URL = 'https://api.github.com/repos/%s/releases/latest' % PLUGIN_REPO
+PLUGIN_UPDATE_TTL = 6 * 60 * 60
+PLUGIN_UPDATE_SETTING = 'plugin_update'
+
+def read_plugin_version():
+    try:
+        with open(Path(__file__).resolve().parent / 'plugin.json', encoding='utf-8') as plugin_json:
+            return str(json.load(plugin_json).get('version') or '').strip()
+    except Exception as exc:
+        decky.logger.warning('[gameartwork] cannot read plugin.json: %s' % exc)
+        return ''
+
+def version_tuple(value):
+    return tuple(int(part) for part in re.findall(r'\d+', value or '')[:3]) or (0,)
+
 class Plugin:
     CACHE_TTL = 6 * 60 * 60
 
@@ -573,6 +589,61 @@ class Plugin:
 
     async def get_setting(self, key, fallback):
         return self.settings.getSetting(key, fallback)
+
+    async def check_update(self, force=False):
+        """Look up the newest GitHub release of the fork.
+
+        Returns the release asset URL so the frontend can hand it to the
+        Decky Loader (utilities/install_plugin), which downloads and unpacks
+        the update with its usual confirmation prompt.
+        """
+        current = read_plugin_version()
+        cached = self.settings.getSetting(PLUGIN_UPDATE_SETTING, None)
+        now = time.time()
+        if (
+            not force
+            and isinstance(cached, dict) and cached.get('url')
+            and now - float(cached.get('checked') or 0) < PLUGIN_UPDATE_TTL
+        ):
+            cached['current'] = current
+            cached['available'] = version_tuple(cached.get('latest')) > version_tuple(current)
+            return cached
+
+        info = {
+            'current': current,
+            'latest': current,
+            'available': False,
+            'url': '',
+            'size': 0,
+            'notes': '',
+            'published_at': '',
+            'checked': now,
+        }
+        try:
+            release = get_json(PLUGIN_UPDATE_URL, timeout=20)
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] update check failed: %s' % exc)
+            info['error'] = str(exc)
+            self.settings.setSetting(PLUGIN_UPDATE_SETTING, info)
+            return info
+
+        latest = str(release.get('tag_name') or '').strip().lstrip('vV')
+        asset = next((
+            item for item in (release.get('assets') or [])
+            if str(item.get('name') or '').startswith('GameArtwork-')
+            and str(item.get('name') or '').endswith('.zip')
+        ), None)
+        info.update({
+            'latest': latest or current,
+            'url': str((asset or {}).get('browser_download_url') or ''),
+            'size': int((asset or {}).get('size') or 0),
+            'notes': str(release.get('body') or ''),
+            'published_at': str(release.get('published_at') or ''),
+            'checked': now,
+        })
+        info['available'] = bool(info['url']) and version_tuple(info['latest']) > version_tuple(current)
+        self.settings.setSetting(PLUGIN_UPDATE_SETTING, info)
+        return info
 
     async def _migration(self):
         decky.migrate_settings(str(Path(decky.DECKY_HOME) / "settings" / "steamgriddb.json"))

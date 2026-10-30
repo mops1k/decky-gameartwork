@@ -61,6 +61,19 @@ Browse and apply game artwork from several sources without leaving Gaming Mode:
 The plugin is not in the Decky store: it is a personal fork and is installed
 manually.
 
+## Updates
+
+The plugin updates itself without leaving Game Mode:
+
+1. Its backend checks the latest GitHub release of this repository (cached for a
+   few hours, forced with the **Check for updates** button).
+2. When a newer version exists, the **Plugin Update** section at the top of the
+   Quick Access menu shows **Update to vX.Y.Z** together with the release notes.
+3. The update is handed to Decky Loader itself (`utilities/install_plugin`), so
+   the loader downloads the release zip, unpacks it into
+   `/home/deck/homebrew/plugins` and reloads the plugin after its usual
+   confirmation prompt. No root filesystem access is needed on the plugin side.
+
 ## Configuration
 
 The plugin works without any keys for SteamGridDB, Steam, Epic, GOG and VNDB.

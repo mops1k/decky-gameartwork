@@ -91,5 +91,15 @@
   "LABEL_OTHER_SOURCES": "Другие источники",
   "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
   "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
-  "LABEL_IGDB_HINT": "Необязательно: включает IGDB для консольных и инди-игр. Создайте приложение на dev.twitch.tv → Register Your Application."
+  "LABEL_IGDB_HINT": "Необязательно: включает IGDB для консольных и инди-игр. Создайте приложение на dev.twitch.tv → Register Your Application.",
+  "LABEL_UPDATE_TITLE": "Обновление плагина",
+  "LABEL_UPDATE_SECTION": "GameArtwork v{version}",
+  "LABEL_UPDATE_INSTALLED": "Установлено v{version}",
+  "LABEL_UPDATE_UP_TO_DATE": "Установлена последняя версия.",
+  "ACTION_UPDATE_INSTALL": "Обновить до v{version}",
+  "ACTION_UPDATE_CHECK": "Проверить обновления",
+  "ACTION_UPDATE_CHECKING": "Проверка…",
+  "ACTION_UPDATE_WHATS_NEW": "Что нового",
+  "LABEL_UPDATE_WHATS_NEW": "Что нового в v{version}",
+  "MSG_UPDATE_NO_NOTES": "В этом релизе нет описания."
 }

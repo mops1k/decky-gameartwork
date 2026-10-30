@@ -38,6 +38,7 @@ import { appgridClasses } from '../../static-classes';
 
 import GuideVideoField from './GuideVideoField';
 import PanelSocialButton from './PanelSocialButton';
+import UpdateSection from './UpdateSection';
 
 const tabSettingsDesc = t('MSG_ASSET_TAB_SETTINGS_DESC', 'Reorder or hide unused tabs, and set the default tab that opens when using "{ACTION_CHANGE_ARTWORK}"').replace('{ACTION_CHANGE_ARTWORK}', t('ACTION_CHANGE_ARTWORK', 'Change Artwork...'));
 const squareGridSizes = DIMENSIONS.grid_p.options.filter((x) => {
@@ -199,6 +200,7 @@ const QuickAccessSettings: VFC = () => {
           </PanelSectionRow>
         </PanelSection>
       )}
+      <UpdateSection pluginName="GameArtwork" />
       {(useCount <= 5) && ( // Hide tutorial if plugin has been used more than 5 times
         <PanelSection title={t('LABEL_USAGE_TITLE', 'Lost? Here\'s a Quick Guide')}>
           <PanelSectionRow>

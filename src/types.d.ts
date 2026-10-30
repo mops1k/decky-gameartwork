@@ -45,3 +45,15 @@ interface AppStoreAppOverview extends SteamAppOverview {
   BIsModOrShortcut: () => boolean;
   BIsShortcut: () => boolean;
 }
+/**
+ * The Decky Loader backend socket (window.DeckyBackend). The loader exposes it
+ * in the Steam UI window shared with plugin frontends, which lets a plugin
+ * reuse the loader's install/update pipeline instead of writing files itself.
+ */
+interface DeckyLoaderBackend {
+  call<Args extends unknown[] = unknown[], Return = unknown>(route: string, ...args: Args): Promise<Return>;
+}
+
+interface Window {
+  DeckyBackend?: DeckyLoaderBackend;
+}
