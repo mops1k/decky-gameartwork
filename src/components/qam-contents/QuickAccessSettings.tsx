@@ -16,7 +16,7 @@ import {
 import { FileSelectionType, openFilePicker } from '@decky/api';
 import { useState, useEffect, VFC, useCallback } from 'react';
 
-import t, { getCredits } from '../../utils/i18n';
+import t from '../../utils/i18n';
 import TabSorter from '../TabSorter';
 import useSettings, { SettingsProvider } from '../../hooks/useSettings';
 import { addHomePatch, removeHomePatch } from '../../patches/homePatch';
@@ -345,18 +345,6 @@ const QuickAccessSettings: VFC = () => {
         <div style={{ fontSize: '12px', padding: '12px 0px' }}>Features with little testing that may be too unstable for regular usage and might be removed later. (Requires restart)</div>
 
       </PanelSection> */}
-      {getCredits() && (
-        <PanelSection title={t('LABEL_TRANSLATION_CREDIT_TITLE', 'English Translation')}>
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '.25em',
-          }}
-          >
-            {getCredits().map((person: any) => <span key={person}>{person}</span>)}
-          </div>
-        </PanelSection>
-      )}
     </>
   );
 };
