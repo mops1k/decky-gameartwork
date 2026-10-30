@@ -57,7 +57,9 @@ jobs:
           STAGE="$(mktemp -d)"
           mkdir -p "$STAGE/$NAME"
           cp plugin.json package.json main.py README.md LICENSE "$STAGE/$NAME/"
-          cp -r dist "$STAGE/$NAME/dist"
+          # Only runtime files belong in the release: sourcemaps and typings
+          # are build leftovers and would triple the download size.
+          rsync -a --exclude '*.map' --exclude '*.d.ts' dist/ "$STAGE/$NAME/dist/"
           # Decky Loader mounts the plugin's defaults/ and py_modules/ into the
           # installed tree, so the bundled python module has to travel with it.
           if [ -d defaults ]; then cp -r defaults/. "$STAGE/$NAME/"; fi
