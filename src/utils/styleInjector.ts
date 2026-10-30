@@ -1,18 +1,31 @@
 import { findSP } from '@decky/ui';
 
+// Steam's document is gone during its own restarts and while the UI boots; an
+// unguarded findSP() then throws "Cannot read properties of undefined (reading 'document')".
+const getDocument = (): Document | undefined => {
+  try {
+    return findSP()?.window?.document;
+  } catch {
+    return undefined;
+  }
+};
+
 export const addStyle = (id: string, css: string) => {
+  const doc = getDocument();
+  if (!doc) return;
+
   // inject css if it isn't there already
-  const existingStyleEl = findSP().window.document.getElementById(id);
+  const existingStyleEl = doc.getElementById(id);
   if (!existingStyleEl) {
-    const styleEl = findSP().window.document.createElement('style');
+    const styleEl = doc.createElement('style');
     styleEl.id = id;
     styleEl.textContent = css;
-    findSP().window.document.head.append(styleEl);
+    doc.head.append(styleEl);
   }
 };
 
 export const removeStyle = (id: string) => {
-  const existingStyleEl = findSP().window.document.getElementById(id);
+  const existingStyleEl = getDocument()?.getElementById(id);
   existingStyleEl?.remove();
 };
 
@@ -20,7 +33,7 @@ export const removeStyle = (id: string) => {
   Updates the style if it exists, creates the style if not.
  */
 export const updateStyle = (id: string, css: string) => {
-  const existingStyleEl = findSP().window.document.getElementById(id);
+  const existingStyleEl = getDocument()?.getElementById(id);
   if (existingStyleEl) {
     existingStyleEl.textContent = css;
   } else {

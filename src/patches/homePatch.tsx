@@ -1,7 +1,6 @@
 import {
   afterPatch,
   findInReactTree,
-  findSP,
   replacePatch,
   callOriginal,
   wrapReactType,
@@ -13,7 +12,7 @@ import { libraryAssetImageClasses, appportraitClasses, homeCarouselClasses, misc
 // import { ASSET_TYPE } from '../constants';
 import { addStyle, removeStyle } from '../utils/styleInjector';
 
-import { rerenderAfterPatchUpdate } from './patchUtils';
+import { rerenderAfterPatchUpdate, isClassComponent } from './patchUtils';
 
 let patch: RoutePatch | undefined;
 
@@ -31,17 +30,6 @@ const calculateDefaultCapsuleWidth = (newHeight: number) => {
 };
 
 export const addHomePatch = (mounting = false, square = false, matchFeatured = false, carouselLogo = false) => {
-  if (square) {
-    addStyle('sgdb-square-capsules-home', `
-      /* only select home page */
-      .${appportraitClasses.InRecentGames} .${libraryAssetImageClasses.Container}.${libraryAssetImageClasses.PortraitImage} {
-        padding-top: 100% !important;
-      }
-    `);
-  } else {
-    removeStyle('sgdb-square-capsules-home');
-  }
-
   if (carouselLogo) {
     addStyle('sgdb-carousel-logo', `
       .${homeCarouselClasses.CarouselGameLabelWrapper} {
@@ -74,6 +62,26 @@ export const addHomePatch = (mounting = false, square = false, matchFeatured = f
   }
 
   patch = routerHook.addPatch('/library/home', (props) => {
+    // The plugin may mount before Steam's document exists, so inject the style
+    // from inside the route patch, where the UI is already up.
+    if (square) {
+      addStyle('sgdb-square-capsules-home', `
+        /* only select home page */
+        .${appportraitClasses.InRecentGames} .${libraryAssetImageClasses.Container}.${libraryAssetImageClasses.PortraitImage} {
+          padding-top: 100% !important;
+        }
+      `);
+    } else {
+      removeStyle('sgdb-square-capsules-home');
+    }
+
+    // Another plugin may replace Steam's home with its own screen (PS5 Dashboard
+    // renders `class Fallback` here). Patching a class type crashes Steam's UI,
+    // and the layout below is Steam's anyway, so leave such a home alone.
+    if (!props.children?.type || isClassComponent(props.children)) {
+      return props;
+    }
+
     afterPatch(props.children, 'type', (_: Record<string, unknown>[], ret?: any) => {
       let cache2: any = null;
       wrapReactType(ret);
@@ -235,7 +243,7 @@ export const addHomePatch = (mounting = false, square = false, matchFeatured = f
 
 export function removeHomePatch(unmounting = false): void {
   if (patch) {
-    findSP().window.document.getElementById('sgdb-square-capsules-home')?.remove();
+    removeStyle('sgdb-square-capsules-home');
     routerHook.removePatch('/library/home', patch);
     patch = undefined;
 

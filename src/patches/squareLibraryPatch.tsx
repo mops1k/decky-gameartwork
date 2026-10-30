@@ -3,14 +3,13 @@ import {
   findInTree,
   findInReactTree,
   wrapReactType,
-  findSP,
 } from '@decky/ui';
 import { RoutePatch, routerHook } from '@decky/api';
 
 import { gamepadLibraryClasses, libraryAssetImageClasses } from '../static-classes';
-import { addStyle } from '../utils/styleInjector';
+import { addStyle, removeStyle } from '../utils/styleInjector';
 
-import { rerenderAfterPatchUpdate } from './patchUtils';
+import { rerenderAfterPatchUpdate, isClassComponent } from './patchUtils';
 
 let patch: RoutePatch | undefined;
 
@@ -27,6 +26,10 @@ const patchGridProps = (props: any) => {
 // Helper uses a cache key (Tab ID) to reuse wrappers, preventing infinite re-render
 const patchDeepComponent = (element: any, cacheKey: string, patcher: (args: any[], ret: any) => any) => {
   if (!element || !element.type) return;
+
+  // A class type must not be replaced with a plain function: the patcher would
+  // call it with `.call()` and throw "Class constructor cannot be invoked without 'new'".
+  if (isClassComponent(element)) return;
 
   if (tabContentCache.has(cacheKey)) {
     element.type = tabContentCache.get(cacheKey);
@@ -50,6 +53,11 @@ export const addSquareLibraryPatch = (mounting = false) => {
         height: 0 !important;
       }
     `);
+
+    // A class component cannot be patched this way (see isClassComponent).
+    if (!props.children?.type || isClassComponent(props.children)) {
+      return props;
+    }
 
     afterPatch(props.children, 'type', (_: Record<string, unknown>[], ret?: any) => {
 
@@ -156,7 +164,7 @@ export const addSquareLibraryPatch = (mounting = false) => {
 export function removeSquareLibraryPatch(unmounting = false): void {
   tabContentCache.clear();
   if (patch) {
-    findSP().window.document.getElementById('sgdb-square-capsules-library')?.remove();
+    removeStyle('sgdb-square-capsules-library');
     routerHook.removePatch('/library', patch);
     patch = undefined;
 
