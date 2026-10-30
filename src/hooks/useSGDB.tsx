@@ -26,51 +26,20 @@ import getCustomLogoPosition from '../utils/getCustomLogoPosition';
 */
 export const SGDB_API_KEY = '6465636b796c6f616465723432303639';
 
-// Direct SGDB API accepts only personal keys. The plugin key works through the
-// mirror, which also makes the API reachable from regions where the domain is
-// blocked. A personal key from the plugin settings takes priority.
-export const SGDB_API_DIRECT = 'https://www.steamgriddb.com/api/v2';
-export const SGDB_API_PROXY = 'https://deckyloader.ru/sgdb-api';
+export const SGDB_API_DIRECT = process.env.ROLLUP_ENV === 'development' ? 'http://sgdb.test/api/v2' : 'https://www.steamgriddb.com/api/v2';
 // kept for the Motd component and third-party patches
-export const SGDB_API_BASE = SGDB_API_PROXY;
+export const SGDB_API_BASE = SGDB_API_DIRECT;
 
-const SGDB_CDN_PREFIX = 'https://cdn2.steamgriddb.com/';
-const SGDB_CDN_PROXY = 'https://deckyloader.ru/sgdb-cdn/';
+// A personal key from the plugin settings takes priority over the bundled one.
+let apiKeyPromise: Promise<string> | null = null;
 
-const patchSgdbCdn = <T,>(value: T): T => {
-  if (typeof value === 'string') {
-    return (value.startsWith(SGDB_CDN_PREFIX)
-      ? SGDB_CDN_PROXY + value.slice(SGDB_CDN_PREFIX.length)
-      : value) as unknown as T;
+const getSgdbApiKey = (): Promise<string> => {
+  if (!apiKeyPromise) {
+    apiKeyPromise = call<[string, string], string>('get_setting', 'sgdb_api_key', '')
+      .then((customKey: string) => (customKey || '').trim() || SGDB_API_KEY)
+      .catch(() => SGDB_API_KEY);
   }
-  if (Array.isArray(value)) {
-    return value.map((item) => patchSgdbCdn(item)) as unknown as T;
-  }
-  if (value && typeof value === 'object') {
-    const result: Record<string, any> = {};
-    for (const [key, item] of Object.entries(value as Record<string, any>)) {
-      result[key] = patchSgdbCdn(item);
-    }
-    return result as unknown as T;
-  }
-  return value;
-};
-
-type SgdbEndpoint = { base: string; key: string };
-let endpointsPromise: Promise<SgdbEndpoint[]> | null = null;
-
-const getSgdbEndpoints = (): Promise<SgdbEndpoint[]> => {
-  if (!endpointsPromise) {
-    endpointsPromise = call<[string, string], string>('get_setting', 'sgdb_api_key', '')
-      .then((customKey: string) => {
-        const key = (customKey || '').trim();
-        return key
-          ? [{ base: SGDB_API_DIRECT, key }, { base: SGDB_API_PROXY, key: SGDB_API_KEY }]
-          : [{ base: SGDB_API_PROXY, key: SGDB_API_KEY }];
-      })
-      .catch(() => [{ base: SGDB_API_PROXY, key: SGDB_API_KEY }]);
-  }
-  return endpointsPromise;
+  return apiKeyPromise;
 };
 
 export type SGDBContextType = {
@@ -205,47 +174,31 @@ export const SGDBProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const apiRequest = useCallback(async (url: string, signal?: AbortSignal): Promise<any[]> => {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    const endpoints = await getSgdbEndpoints();
-    let lastError: any;
+    const key = await getSgdbApiKey();
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    for (const endpoint of endpoints) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      try {
-        const res = await fetchNoCors(`${endpoint.base}${url}`, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${endpoint.key}`,
-          },
-        });
-        log(res);
+    const res = await fetchNoCors(`${SGDB_API_DIRECT}${url}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+    });
+    log(res);
 
-        if (!res.ok) {
-          // 4xx (except rate limit) means the endpoint itself is fine, retrying
-          // through the mirror will not help.
-          if (res.status < 500 && res.status !== 429) {
-            const apiErr: any = new Error('SGDB API request failed');
-            apiErr.status = res.status;
-            throw apiErr;
-          }
-          throw new Error('SGDB API request failed');
-        }
-
-        const assetRes = await res.json();
-        if (!assetRes.success) {
-          const apiErr: any = new Error((assetRes.errors || []).join(', '));
-          apiErr.status = res.status;
-          throw apiErr;
-        }
-        return patchSgdbCdn(assetRes.data);
-      } catch (err: any) {
-        if (err?.name === 'AbortError') throw err;
-        lastError = err;
-        log('sgdb endpoint failed', endpoint.base, err?.message);
-      }
+    if (!res.ok) {
+      const apiErr: any = new Error('SGDB API request failed');
+      apiErr.status = res.status;
+      throw apiErr;
     }
 
-    throw lastError ?? new Error('SGDB API request failed');
+    const assetRes = await res.json();
+    if (!assetRes.success) {
+      const apiErr: any = new Error((assetRes.errors || []).join(', '));
+      apiErr.status = res.status;
+      throw apiErr;
+    }
+    return assetRes.data;
   }, []);
 
   const getImageAsB64 = useCallback(async (location: string, path = false) : Promise<string | null> => {

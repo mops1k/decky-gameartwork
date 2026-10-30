@@ -1,6 +1,6 @@
 {
   "name": "gameartwork",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Decky plugin that cross-searches game artwork from several sources in Gaming Mode.",
   "type": "module",
   "scripts": {

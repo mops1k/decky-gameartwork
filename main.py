@@ -18,16 +18,8 @@ import decky # type: ignore
 
 WINDOWS = system() == "Windows"
 
-SGDB_CDN = "https://cdn2.steamgriddb.com/"
-SGDB_CDN_PROXY = "https://deckyloader.ru/sgdb-cdn/"
 STEAM_ASSET_BASE = "https://shared.steamstatic.com/store_item_assets/"
 STEAM_ICON_BASE = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/"
-
-def proxy_sgdb_url(url: str) -> str:
-    """Rewrite SGDB CDN links through the mirror that is reachable in RU."""
-    if url and url.startswith(SGDB_CDN):
-        return SGDB_CDN_PROXY + url[len(SGDB_CDN):]
-    return url
 
 def get_json(url: str, params=None, timeout: int = 15):
     if params:
@@ -487,7 +479,7 @@ class Plugin:
         return self._cache_set(key, games)
 
     async def download_as_base64(self, url=''):
-        req = Request(proxy_sgdb_url(url), headers={'User-Agent': 'decky-steamgriddb backend'})
+        req = Request(url, headers={'User-Agent': 'decky-steamgriddb backend'})
         content = urlopen(req, context=get_ssl_context()).read()
         return b64encode(content).decode('utf-8')
 
@@ -502,7 +494,7 @@ class Plugin:
         decky.logger.debug({url, output_dir, file_name})
         try:
             if access(dirname(output_dir), W_OK):
-                req = Request(proxy_sgdb_url(url), headers={'User-Agent': 'decky-steamgriddb backend'})
+                req = Request(url, headers={'User-Agent': 'decky-steamgriddb backend'})
                 res = urlopen(req, context=get_ssl_context())
                 if res.status == 200:
                     with open(Path(output_dir) / file_name, mode='wb') as f:
