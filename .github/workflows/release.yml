@@ -2,193 +2,88 @@ name: Release
 
 on:
   push:
-    branches:
-      - "release"
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: v<version from plugin.json>)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark the release as a pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  create-release:
-    permissions:
-      contents: write
-    runs-on: ubuntu-20.04
-    outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
-      change_log: ${{ steps.changelog.outputs.clean_changelog }}
-      version: ${{ steps.changelog.outputs.version }}
-      tag: ${{ steps.changelog.outputs.tag }}
-
+  release:
+    name: Build and publish the plugin
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Setup Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16
-
-      - name: Conventional Changelog Action
-        id: changelog
-        uses: ./.github/workflows/custom-changelog
-        with:
-          github-token: ${{ secrets.github_token }}
-
-      - name: Create Release
-        id: create-release
-        uses: actions/github-script@v6
-        env:
-          RELEASE_TAG: ${{ steps.changelog.outputs.tag }}
-          RELEASE_LOG: ${{ steps.changelog.outputs.clean_changelog }}
-        with:
-          script: |
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: `${process.env.RELEASE_TAG}`,
-              name: `Decky SteamGridDB ${process.env.RELEASE_TAG}`,
-              body: `${process.env.RELEASE_LOG}`,
-              draft: true,
-              prerelease: false
-            });
-            return data.id
-
-  build-plugin:
-    needs: create-release
-    permissions:
-      contents: write
-    runs-on: ubuntu-20.04
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: release
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 16
+          node-version: 22
+          cache: pnpm
 
-      - name: Setup Pnpm
-        uses: pnpm/action-setup@v2
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Package plugin
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./plugin.json').version")"
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="v${VERSION}"; fi
+          NAME="decky-gameartwork"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/$NAME"
+          cp plugin.json package.json main.py README.md LICENSE "$STAGE/$NAME/"
+          cp -r dist "$STAGE/$NAME/dist"
+          # Decky Loader mounts the plugin's defaults/ and py_modules/ into the
+          # installed tree, so the bundled python module has to travel with it.
+          if [ -d defaults ]; then cp -r defaults/. "$STAGE/$NAME/"; fi
+          if [ -d py_modules ]; then cp -r py_modules "$STAGE/$NAME/py_modules"; fi
+          test -f "$STAGE/$NAME/plugin.json"
+          test -f "$STAGE/$NAME/dist/index.js"
+          ( cd "$STAGE" && zip -qr "$GITHUB_WORKSPACE/GameArtwork-${VERSION}.zip" "$NAME" )
+          rm -rf "$STAGE"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          version: 6.0.2
+          tag_name: ${{ steps.package.outputs.tag }}
+          name: GameArtwork ${{ steps.package.outputs.tag }}
+          files: GameArtwork-${{ steps.package.outputs.version }}.zip
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: true
+          draft: false
+          body: |
+            Decky Loader plugin that cross-searches game artwork across
+            **SteamGridDB, Steam, Epic Games Store, GOG, IGDB** and **VNDB**.
+            Extended fork of [SteamGridDB/decky-steamgriddb](https://github.com/SteamGridDB/decky-steamgriddb).
 
-      - name: Install Frontend Dependencies
-        run: pnpm install
-
-      - name: Build Decky SteamGridDB
-        uses: actions/github-script@v6
-        env:
-          release_id: ${{ needs.create-release.outputs.release_id }}
-          release_tag: ${{ needs.create-release.outputs.tag }}
-        with:
-          script: |
-            const fs = require("fs");
-            const child_process = require("child_process");
-            const path = require("path");
-
-            const includeInBuild = [
-              "plugin.json",
-              "package.json",
-              "main.py",
-              "README.md",
-              "LICENSE"
-            ];
-
-            async function uploadReleaseAsset(name, contents) {
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: process.env.release_id,
-                name: name,
-                data: contents
-              });
-            }
-
-            function copyDirRecursive(parentPath, contents, dest) {
-              for (const file of contents) {
-                const fileName = file.name;
-                const srcPath = path.join(cwdPath, parentPath, fileName);
-                const destPath = path.join(cwdPath, dest, fileName);
-
-                if (fs.lstatSync(srcPath).isDirectory()) {
-                  const dirContents = fs.readdirSync(srcPath, { withFileTypes: true });
-                  const dirDestPath = path.join(dest, fileName);
-                  fs.mkdirSync(dirDestPath, { recursive: true });
-                  copyDirRecursive(path.join(parentPath, fileName), dirContents, dirDestPath);
-                } else {
-                  fs.copyFileSync(srcPath, destPath);
-                }
-              }
-            }
-
-            const cwdPath = path.resolve(process.cwd());
-
-            // * build the plugin with `pnpm build`
-            child_process.execSync("pnpm build");
-
-            // * once finished, make folder with all files in includeInBuild
-            const bundleWrapperPath = path.join(cwdPath, "bundle");
-            const bundlePath = path.join(bundleWrapperPath, "DeckySteamGridDB");
-            fs.mkdirSync(bundlePath, { recursive: true });
-            fs.mkdirSync(path.join(bundlePath, "dist"));
-
-            for (const fileToInclude of includeInBuild) {
-              const srcPath = path.join(cwdPath, fileToInclude);
-              const destPath = path.join(bundlePath, fileToInclude);
-
-              fs.copyFileSync(srcPath, destPath);
-            }
-
-            // * check contents of defaults
-            const defaultsPath = path.join(cwdPath, "defaults");
-            if (fs.existsSync(defaultsPath)) {
-              const defaultContents = fs.readdirSync(defaultsPath, { withFileTypes: true });
-              copyDirRecursive("defaults", defaultContents, `bundle${path.sep}DeckySteamGridDB`);
-            }
-
-            // * check contents of dist
-            const distPath = path.join(cwdPath, "dist");
-            if (fs.existsSync(distPath)) {
-              const distContents = fs.readdirSync(distPath, { withFileTypes: true });
-              copyDirRecursive("dist", distContents, `bundle${path.sep}DeckySteamGridDB${path.sep}`);
-            }
-
-            // * zip
-            child_process.execSync("pnpm i zip-a-folder");
-            const { zip, COMPRESSION_LEVEL } = require('zip-a-folder');
-
-            const outputZipPath = path.join(cwdPath, "bundle.zip");
-            await zip(bundleWrapperPath, outputZipPath, {compression: COMPRESSION_LEVEL.high});
-
-            // * upload to release
-            await uploadReleaseAsset(`DeckySteamGridDB_${process.env.release_tag}.zip`, fs.readFileSync(outputZipPath));
-
-  publish-release:
-    needs: [create-release, build-plugin]
-    permissions:
-      contents: write
-    runs-on: ubuntu-20.04
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-          ref: release
-          
-      - name: Publish Release
-        id: publish-release
-        uses: actions/github-script@v6
-        env:
-          release_id: ${{ needs.create-release.outputs.release_id }}
-        with:
-          script: |
-            github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: process.env.release_id,
-              draft: false,
-              prerelease: false
-            })
-  
+            ## Install
+            1. Install [Decky Loader](https://wiki.deckbrew.xyz/en/user-guide/install).
+            2. Open Quick Access → Decky → Settings → Developer → **Install from URL**.
+            3. Paste the download URL of the `GameArtwork-<version>.zip` asset below.

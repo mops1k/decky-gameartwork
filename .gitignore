@@ -52,3 +52,5 @@ backend/out
 
 /py_modules/
 decky_plugin.py
+# release bundle produced by the workflow
+bundle.zip
