@@ -37,6 +37,16 @@ Browse and apply game artwork from several sources without leaving Gaming Mode:
   marked, based on what the plugin applied and Steam's custom-artwork files.
 - **Per-source switches** — each store can be turned off in the Quick Access
   settings, so requests and tiles only come from sources you care about.
+- **Restart-proof cache** — source answers are kept on disk (and in the browser
+  cache), so the grid opens instantly and still works when a source is offline.
+- **Manual rematch** — a store tile offers "Wrong game? Pick another..." and sends
+  you back to the game picker without digging through the filters.
+- **Source status** — the Quick Access settings can ping every source and show
+  which ones answer and how fast.
+- **Settings backup** — per-game mappings and settings are exported to
+  `~/gameartwork-backup` and can be restored from the same panel.
+- **Bulk shortcut artwork** — fills the missing artwork of non-Steam shortcuts
+  from Steam, skipping games with custom art or without a confident match.
 - **IGDB support** (optional) — console and indie games that are missing from the
   stores can be pulled from IGDB with your own Twitch API credentials.
 - **Manual Steam AppID** — if a store search finds nothing, paste a Steam AppID

@@ -20,6 +20,8 @@ WINDOWS = system() == "Windows"
 
 STEAM_ASSET_BASE = "https://shared.steamstatic.com/store_item_assets/"
 STEAM_ICON_BASE = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/"
+# Same key the frontend uses when the user has not set a personal one.
+SGDB_PLUGIN_KEY = '6465636b796c6f616465723432303639'
 
 def get_json(url: str, params=None, timeout: int = 15, retries: int = 1):
     if params:
@@ -187,7 +189,6 @@ def igdb_image_url(url, size):
         url = "https:" + url
     return re.sub(r"/t_[a-z0-9_]+/", "/%s/" % size, url)
 
-
 def post_json(url: str, payload, headers=None, timeout: int = 20):
     body = json.dumps(payload).encode("utf-8")
     req_headers = {
@@ -270,10 +271,14 @@ def detect_latest_version():
 
 class Plugin:
     CACHE_TTL = 6 * 60 * 60
+    CACHE_LIMIT = 500
+    CACHE_FILE = 'source-cache.json'
+    BACKUP_PREFIXES = ('nonsteam_', 'external_name_', 'applied_art_', 'steam_appid_', 'sources_enabled', 'sgdb_api_key', 'igdb_client_id', 'igdb_client_secret', 'filters_')
 
     async def _main(self):
         self.settings = SettingsManager(name="steamgriddb", settings_directory=decky.DECKY_PLUGIN_SETTINGS_DIR)
-        self._cache = {}
+        self._cache = self._load_cache()
+        self._cache_saved_at = 0
         try:
             import asyncio
             asyncio.get_event_loop().create_task(self._selftest())
@@ -289,6 +294,8 @@ class Plugin:
             decky.logger.info("[gameartwork] selftest vndb: %d" % len(vndb))
             steam = await self.steam_search_apps("Hollow Knight")
             decky.logger.info("[gameartwork] selftest steam: %d" % len(steam))
+            igdb = await self.igdb_search_games("Hades")
+            decky.logger.info("[gameartwork] selftest igdb: %d" % len(igdb))
         except Exception as exc:
             decky.logger.error("[gameartwork] selftest failed: %s" % exc)
 
@@ -298,21 +305,247 @@ class Plugin:
     async def _unload(self):
         pass
 
-    def _cache_get(self, key):
+    async def source_health(self):
+        """Ping every source (cache bypassed) for the Quick Access health panel."""
+        import asyncio
+
+        async def check_steam():
+            data = get_json("https://store.steampowered.com/api/storesearch/", {
+                "term": "Hollow Knight", "l": "english", "cc": "US",
+            }, timeout=12)
+            return bool(data.get("items"))
+
+        async def check_epic():
+            query = (
+                "query s($Keywords:String!){Catalog{searchStore(keywords:$Keywords,"
+                "country:\"US\",locale:\"en-US\",count:1){elements{title}}}}"
+            )
+            data = post_json("https://store.epicgames.com/graphql", {
+                "query": query,
+                "variables": {"Keywords": "Fortnite"},
+            }, timeout=15)
+            return bool(((data.get("data") or {}).get("Catalog") or {}).get("searchStore"))
+
+        async def check_gog():
+            data = get_json(GOG_CATALOG_URL, {
+                "limit": 1, "page": 1, "countryCode": "US", "locale": "en-US",
+                "query": "like:cyberpunk",
+            }, timeout=20, retries=1)
+            return data.get("products") is not None
+
+        async def check_vndb():
+            data = post_json("https://api.vndb.org/kana/vn", {
+                "filters": ["search", "=", "steins gate"],
+                "fields": "id",
+                "results": 1,
+            }, timeout=15)
+            return isinstance(data.get("results"), list)
+
+        async def check_igdb():
+            client_id, client_secret = self._igdb_credentials()
+            if not client_id or not client_secret:
+                raise RuntimeError('no Twitch Client ID/Secret in the plugin settings')
+            token, igdb_client = await self._igdb_access_token()
+            if not token:
+                raise RuntimeError('IGDB token request failed')
+            req = Request(IGDB_GAMES_URL, data=b'fields id; limit 1;', method='POST', headers={
+                "Client-ID": igdb_client,
+                "Authorization": "Bearer %s" % token,
+                "Accept": "application/json",
+                "Content-Type": "text/plain",
+                "User-Agent": "gameartwork backend",
+            })
+            with urlopen(req, context=get_ssl_context(), timeout=15) as res:
+                return isinstance(json.loads(res.read().decode("utf-8")), list)
+
+        async def check_sgdb():
+            key = (self.settings.getSetting('sgdb_api_key', '') or '').strip() or SGDB_PLUGIN_KEY
+            req = Request(
+                "https://www.steamgriddb.com/api/v2/search/autocomplete/portal",
+                headers={
+                    "Authorization": "Bearer %s" % key,
+                    "Accept": "application/json",
+                    "User-Agent": "gameartwork backend",
+                },
+            )
+            with urlopen(req, context=get_ssl_context(), timeout=15) as res:
+                payload = json.loads(res.read().decode("utf-8"))
+            if not payload.get("success"):
+                raise RuntimeError(', '.join(payload.get('errors') or ['API error']))
+            return True
+
+        checks = {
+            'sgdb': check_sgdb,
+            'steam': check_steam,
+            'epic': check_epic,
+            'gog': check_gog,
+            'vndb': check_vndb,
+            'igdb': check_igdb,
+        }
+        results = {}
+
+        async def run(name, check):
+            started = time.time()
+            try:
+                ok = await check()
+                results[name] = {
+                    'ok': bool(ok),
+                    'ms': int((time.time() - started) * 1000),
+                    'error': '' if ok else 'empty answer',
+                }
+            except Exception as exc:
+                results[name] = {
+                    'ok': False,
+                    'ms': int((time.time() - started) * 1000),
+                    'error': str(exc)[:200],
+                }
+
+        await asyncio.gather(*(run(name, check) for name, check in checks.items()))
+        return results
+
+    def _settings_snapshot(self):
+        data = getattr(self.settings, 'settings', {}) or {}
+        return {
+            key: value
+            for key, value in data.items()
+            if isinstance(key, str) and key.startswith(self.BACKUP_PREFIXES)
+        }
+
+    def _backup_dir(self):
+        return Path(decky.DECKY_USER_HOME) / 'gameartwork-backup'
+
+    async def export_settings(self):
+        """Write the per-game mappings and settings to the user's home."""
+        try:
+            directory = self._backup_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / ('gameartwork-settings-%s.json' % time.strftime('%Y%m%d-%H%M%S'))
+            payload = {
+                'version': 1,
+                'exported_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'settings': self._settings_snapshot(),
+            }
+            with open(path, 'w', encoding='utf-8') as backup:
+                json.dump(payload, backup, ensure_ascii=False, indent=2)
+            decky.logger.info('[gameartwork] settings exported to %s' % path)
+            return {'ok': True, 'path': str(path), 'count': len(payload['settings'])}
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] export failed: %s' % exc)
+            return {'ok': False, 'error': str(exc)}
+
+    async def list_backups(self):
+        try:
+            directory = self._backup_dir()
+            backups = []
+            for path in sorted(directory.glob('gameartwork-settings-*.json'), reverse=True)[:20]:
+                stat_result = path.stat()
+                backups.append({
+                    'name': path.name,
+                    'path': str(path),
+                    'size': stat_result.st_size,
+                    'modified': int(stat_result.st_mtime),
+                })
+            return backups
+        except Exception:
+            return []
+
+    async def import_settings(self, path=''):
+        """Restore mappings from a backup written by export_settings."""
+        try:
+            directory = self._backup_dir()
+            if path:
+                target = Path(path)
+            else:
+                candidates = sorted(directory.glob('gameartwork-settings-*.json'), reverse=True)
+                if not candidates:
+                    return {'ok': False, 'error': 'no backup found in %s' % directory}
+                target = candidates[0]
+            # Never read an arbitrary path: only the backup directory is allowed.
+            if directory.resolve() not in target.resolve().parents:
+                return {'ok': False, 'error': 'backup must live in %s' % directory}
+            with open(target, encoding='utf-8') as backup:
+                payload = json.load(backup)
+            settings = payload.get('settings') if isinstance(payload, dict) else None
+            if not isinstance(settings, dict):
+                return {'ok': False, 'error': 'invalid backup file'}
+            applied = 0
+            for key, value in settings.items():
+                if not isinstance(key, str) or not key.startswith(self.BACKUP_PREFIXES):
+                    continue
+                self.settings.setSetting(key, value)
+                applied += 1
+            decky.logger.info('[gameartwork] imported %d settings from %s' % (applied, target))
+            return {'ok': True, 'count': applied, 'source': str(target)}
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] import failed: %s' % exc)
+            return {'ok': False, 'error': str(exc)}
+
+    def _cache_path(self):
+        return Path(decky.DECKY_PLUGIN_SETTINGS_DIR) / 'cache' / self.CACHE_FILE
+
+    def _load_cache(self):
+        """Source cache lives on disk: Decky restarts wipe process memory."""
+        try:
+            with open(self._cache_path(), encoding='utf-8') as cache_file:
+                raw = json.load(cache_file)
+        except FileNotFoundError:
+            return {}
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] cannot read cache: %s' % exc)
+            return {}
+        entries = raw.get('entries') if isinstance(raw, dict) else None
+        if not isinstance(entries, dict):
+            return {}
+        cache = {}
+        for key, value in entries.items():
+            if isinstance(value, list) and len(value) == 2:
+                cache[key] = (float(value[0]), value[1])
+        return cache
+
+    def _save_cache(self, force=False):
+        now = time.time()
+        # Sources answer in bursts: write at most every couple of seconds.
+        if not force and now - self._cache_saved_at < 2:
+            return
+        self._cache_saved_at = now
+        try:
+            if len(self._cache) > self.CACHE_LIMIT:
+                newest = sorted(self._cache.items(), key=lambda item: item[1][0], reverse=True)[:self.CACHE_LIMIT]
+                self._cache = dict(newest)
+            path = self._cache_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                'version': 1,
+                'entries': {key: [ts, value] for key, (ts, value) in self._cache.items()},
+            }
+            temporary = path.with_suffix('.tmp')
+            with open(temporary, 'w', encoding='utf-8') as cache_file:
+                json.dump(payload, cache_file, ensure_ascii=False)
+            temporary.replace(path)
+        except Exception as exc:
+            decky.logger.warning('[gameartwork] cannot write cache: %s' % exc)
+
+    def _cache_get(self, key, allow_stale=False):
         entry = self._cache.get(key)
         if not entry:
             return None
         ts, value = entry
-        if time.time() - ts > self.CACHE_TTL:
-            self._cache.pop(key, None)
-            return None
-        return value
+        if allow_stale or time.time() - ts <= self.CACHE_TTL:
+            return value
+        # Keep the expired entry: when the network is down it is the only
+        # answer we can still give.
+        return None
+
+    def _stale_or_none(self, key):
+        """Last known answer regardless of age: offline mode."""
+        return self._cache_get(key, allow_stale=True)
 
     def _cache_set(self, key, value):
         # keep the cache small: this runs inside the Decky loader process
-        if len(self._cache) > 256:
+        if len(self._cache) > self.CACHE_LIMIT:
             self._cache.clear()
         self._cache[key] = (time.time(), value)
+        self._save_cache()
         return value
 
     async def steam_search_apps(self, term='', lang='russian'):
@@ -331,6 +564,11 @@ class Plugin:
                 "cc": "US",
             })
         except Exception as exc:
+            # Offline: a cached answer is better than an empty store.
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] steam storesearch offline, cached %r" % term)
+                return stale
             decky.logger.warning("steam storesearch failed: %s" % exc)
             return []
         items = []
@@ -369,6 +607,10 @@ class Plugin:
                 "input_json": input_json,
             })
         except Exception as exc:
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] steam storebrowse offline, cached %s" % appid)
+                return stale
             decky.logger.warning("steam storebrowse failed: %s" % exc)
             return None
         items = (data.get("response") or {}).get("store_items") or []
@@ -448,6 +690,10 @@ class Plugin:
                 },
             })
         except Exception as exc:
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] epic offline, cached %r" % term)
+                return stale
             decky.logger.warning("epic search failed: %s" % exc)
             return []
         elements = (((data.get("data") or {}).get("Catalog") or {}).get("searchStore") or {}).get("elements") or []
@@ -513,6 +759,10 @@ class Plugin:
                 "results": 10,
             })
         except Exception as exc:
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] vndb offline, cached %r" % term)
+                return stale
             decky.logger.warning("vndb search failed: %s" % exc)
             return []
         games = []
@@ -575,7 +825,7 @@ class Plugin:
         return token, client_id
 
     async def igdb_search_games(self, term=''):
-        """IGDB (needs a free Twitch Client ID/Secret in the plugin settings)."""
+        """IGDB: the official API with a Twitch key, the public website without."""
         term = (term or '').strip()
         if not term:
             return []
@@ -600,29 +850,54 @@ class Plugin:
             with urlopen(req, context=get_ssl_context(), timeout=25) as res:
                 items = json.loads(res.read().decode("utf-8"))
         except Exception as exc:
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] igdb offline, cached %r" % term)
+                return stale
             decky.logger.warning("[gameartwork] igdb request failed: %s" % exc)
             return self._cache_set(key, [])
 
         games = []
         for item in items:
             images = {}
+            extras = []
             cover = (item.get("cover") or {}).get("url")
             cover_url = igdb_image_url(cover, "t_cover_big_2x")
             if cover_url:
                 images["grid_p"] = {"url": cover_url, "width": 528, "height": 748}
-            artworks = item.get("artworks") or []
+
+            artworks = [
+                igdb_image_url((artwork or {}).get("url"), "t_1080p")
+                for artwork in (item.get("artworks") or [])
+            ]
+            artworks = [url for url in artworks if url]
             if artworks:
-                art_url = igdb_image_url((artworks[0] or {}).get("url"), "t_1080p")
-                if art_url:
-                    images["grid_l"] = {"url": art_url, "width": 1920, "height": 1080}
-            screenshots = item.get("screenshots") or []
+                images["grid_l"] = {"url": artworks[0], "width": 1920, "height": 1080}
+                # Extra key art is still artwork, not a duplicate: show it in the
+                # wide tab next to the first one.
+                extras.extend(
+                    {"kind": "grid_l", "url": url, "width": 1920, "height": 1080}
+                    for url in artworks[1:4]
+                )
+
+            screenshots = [
+                igdb_image_url((shot or {}).get("url"), "t_1080p")
+                for shot in (item.get("screenshots") or [])
+            ]
+            screenshots = [url for url in screenshots if url]
             if screenshots:
-                shot_url = igdb_image_url((screenshots[0] or {}).get("url"), "t_1080p")
-                if shot_url:
-                    images["hero"] = {"url": shot_url, "width": 1920, "height": 1080}
+                images["hero"] = {"url": screenshots[0], "width": 1920, "height": 1080}
+                extras.extend(
+                    {"kind": "hero", "url": url, "width": 1920, "height": 1080}
+                    for url in screenshots[1:6]
+                )
+
             if not images:
                 continue
-            games.append({"id": str(item.get("id")), "name": item.get("name") or "", "images": images})
+            game = {"id": str(item.get("id")), "name": item.get("name") or "", "images": images}
+            if extras:
+                game["extras"] = extras
+            games.append(game)
         decky.logger.info("[gameartwork] igdb search %r -> %d" % (term, len(games)))
         return self._cache_set(key, games)
 
@@ -640,6 +915,10 @@ class Plugin:
         try:
             games = gog_catalog_games(term)
         except Exception as exc:
+            stale = self._stale_or_none(key)
+            if stale is not None:
+                decky.logger.info("[gameartwork] gog offline, cached %r" % term)
+                return stale
             decky.logger.warning("[gameartwork] gog catalog failed: %s" % exc)
         if not games:
             games = gog_slug_games(term)

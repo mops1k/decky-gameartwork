@@ -39,6 +39,7 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
     externalSgdbData,
     endReached,
     externalTerm,
+    showGameSelection,
   } = useAssetSearch();
   const { appId, appOverview, changeAssetFromUrl } = useSGDB();
   const [downloadingId, setDownloadingId] = useState<string | number | null>(null);
@@ -221,6 +222,7 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
           term={searchTerm || appOverview?.display_name || ''}
           onApply={async (item) => await setAsset(item.id, item.url)}
           onApplyBundle={applyBundle}
+          onPickGame={showGameSelection}
         />
       ), window);
       return;

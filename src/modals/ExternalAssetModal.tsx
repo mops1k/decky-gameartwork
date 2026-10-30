@@ -22,7 +22,9 @@ const ExternalAssetModal: FC<{
   term: string;
   onApply: (asset: ExternalAsset) => Promise<void>;
   onApplyBundle: (items: ExternalAsset[]) => Promise<void>;
-}> = ({ closeModal, asset, assetType, term, onApply, onApplyBundle }) => {
+  /** The store matched the wrong game: reopen the picker. */
+  onPickGame?: () => void;
+}> = ({ closeModal, asset, assetType, term, onApply, onApplyBundle, onPickGame }) => {
   const [bundle, setBundle] = useState<ExternalAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
@@ -63,6 +65,11 @@ const ExternalAssetModal: FC<{
     closeModal?.();
   };
 
+  const handlePickGame = () => {
+    closeModal?.();
+    onPickGame?.();
+  };
+
   return (
     <ModalRoot className="sgdb-modal sgdb-modal-details" closeModal={closeModal}>
       <div className={joinClassNames('sgdb-modal-details-wrapper', asset.width > asset.height ? 'wide' : '')}>
@@ -94,6 +101,11 @@ const ExternalAssetModal: FC<{
               </DialogButton>
               <span className="meta">{bundleKinds}</span>
             </>
+          ) : null}
+          {onPickGame ? (
+            <DialogButton style={{ marginTop: '1em' }} onClick={handlePickGame}>
+              {t('ACTION_PICK_OTHER_GAME', 'Wrong game? Pick another...')}
+            </DialogButton>
           ) : null}
         </div>
       </div>

@@ -389,3 +389,24 @@
   }
 }
 
+
+// Quick Access panel: source health rows (outside #sgdb-wrap).
+.source-health-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .5em;
+  font-size: .9em;
+  padding: 2px 0;
+  .ok {
+    color: #2f9e44;
+    white-space: nowrap;
+  }
+  .fail {
+    color: #e5344c;
+    max-width: 62%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

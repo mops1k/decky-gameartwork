@@ -47,6 +47,10 @@ export type AssetSearchContextType = {
   moreLoading: boolean;
   endReached: boolean;
   externalTerm: string | null;
+  /** Switch the whole search to a store title (picked from a card). */
+  selectExternalName: (name: string) => void;
+  /** Open the game picker, e.g. when the store matched the wrong game. */
+  showGameSelection: () => void;
 }
 
 export const SearchContext = createContext({});
@@ -300,7 +304,9 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
     moreLoading,
     endReached,
     externalTerm,
-  }), [loading, assets, searchAndSetAssets, loadMore, selectedGame, externalSgdbData, openFilters, isFilterActive, moreLoading, endReached, externalTerm]);
+    selectExternalName,
+    showGameSelection,
+  }), [loading, assets, searchAndSetAssets, loadMore, selectedGame, externalSgdbData, openFilters, isFilterActive, moreLoading, endReached, externalTerm, selectExternalName, showGameSelection]);
 
   return (
     <SearchContext.Provider value={value}>

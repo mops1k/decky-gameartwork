@@ -22,10 +22,14 @@ export type ExternalSourcesState = Partial<Record<ExternalSource, SourceState>>;
 
 type ProviderImage = { url: string; width: number; height: number };
 
+/** Additional artwork of one type (IGDB ships several screenshots and key arts). */
+type ProviderExtra = { kind: SGDBAssetType; url: string; width?: number; height?: number };
+
 type ProviderGame = {
   id: string;
   name: string;
   images: Partial<Record<SGDBAssetType, ProviderImage>>;
+  extras?: ProviderExtra[];
 };
 
 export type ExternalAsset = {
@@ -48,8 +52,8 @@ const FALLBACK_SIZE: Record<string, [number, number]> = {
   logo: [0, 0],
 };
 
-const toAssets = (game: ProviderGame, source: ExternalSource): ExternalAsset[] =>
-  Object.entries(game.images)
+const toAssets = (game: ProviderGame, source: ExternalSource): ExternalAsset[] => {
+  const primary = Object.entries(game.images)
     .filter(([, image]) => Boolean(image?.url))
     .map(([kind, image]) => {
       const typed = image as ProviderImage;
@@ -66,6 +70,21 @@ const toAssets = (game: ProviderGame, source: ExternalSource): ExternalAsset[] =
         height: typed.height || fallbackHeight,
       };
     });
+  const extras = (game.extras || [])
+    .filter((extra) => Boolean(extra?.url))
+    .map((extra, index) => ({
+      id: `${source}:${game.id}:${extra.kind}:extra${index}`,
+      source,
+      sourceName: SOURCE_NAMES[source],
+      name: game.name,
+      kind: extra.kind,
+      url: extra.url,
+      thumb: extra.url,
+      width: extra.width || 1920,
+      height: extra.height || 1080,
+    }));
+  return [...primary, ...extras];
+};
 
 const searchSteam = async (term: string): Promise<ExternalAsset[]> => {
   const apps = await searchSteamApps(term);
@@ -174,6 +193,49 @@ export const searchExternalTitles = async (term: string): Promise<ExternalTitle[
  */
 const inFlight = new Map<string, Promise<ExternalAsset[]>>();
 
+const LOCAL_CACHE_PREFIX = 'gameartwork:external:';
+const LOCAL_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+/** Results survive a Decky restart and a lost connection in localStorage. */
+const readLocalCache = (key: string): ExternalAsset[] | null => {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.assets)) return null;
+    if (Date.now() - Number(parsed.at || 0) > LOCAL_CACHE_TTL) return null;
+    return parsed.assets as ExternalAsset[];
+  } catch {
+    return null;
+  }
+};
+
+const writeLocalCache = (key: string, assets: ExternalAsset[]) => {
+  try {
+    if (!assets.length) return;
+    window.localStorage.setItem(LOCAL_CACHE_PREFIX + key, JSON.stringify({ at: Date.now(), assets }));
+  } catch {
+    // localStorage may be unavailable or full: the in-memory cache still works
+  }
+};
+
+/** One URL must not fill the grid twice (ay same image under two types). */
+const dedupeByUrl = (assets: ExternalAsset[]): ExternalAsset[] => {
+  const seen = new Set<string>();
+  return assets.filter((asset) => {
+    const url = asset.url.split('?')[0];
+    if (seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+};
+
+const sourcesFromAssets = (assets: ExternalAsset[]): ExternalSourcesState => {
+  const sources: ExternalSourcesState = {};
+  assets.forEach((asset) => { sources[asset.source] = 'done'; });
+  return sources;
+};
+
 export const searchExternalSources = async (
   term: string,
   onProgress?: (progress: ExternalSearchProgress) => void
@@ -188,6 +250,16 @@ export const searchExternalSources = async (
     cached.enabled.forEach((source) => { sources[source] = 'done'; });
     onProgress?.({ assets: cached.assets, sources, enabled: cached.enabled });
     return cached.assets;
+  }
+
+  // No connection at all: serve the last known answer instead of nothing.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const local = readLocalCache(cacheKey);
+    if (local) {
+      const sources = sourcesFromAssets(local);
+      onProgress?.({ assets: local, sources, enabled: ALL_SOURCES });
+      return local;
+    }
   }
 
   // Several asset tabs ask for the same game at once: share one request.
@@ -221,12 +293,23 @@ export const searchExternalSources = async (
         log(`source ${source} search failed`, err);
         sources[source] = 'error';
       }
-      onProgress?.({ assets: [...collected], sources: { ...sources }, enabled });
+      onProgress?.({ assets: dedupeByUrl([...collected]), sources: { ...sources }, enabled });
     }));
 
-    const ordered = ALL_SOURCES.flatMap((source) => collected.filter((asset) => asset.source === source));
+    const ordered = dedupeByUrl(ALL_SOURCES.flatMap((source) => collected.filter((asset) => asset.source === source)));
+    if (!ordered.length) {
+      // Every source failed or answered empty (offline captive portal, API
+      // outage): fall back to the last successful cross-search.
+      const local = readLocalCache(cacheKey);
+      if (local) {
+        const localSources = sourcesFromAssets(local);
+        onProgress?.({ assets: local, sources: localSources, enabled });
+        return local;
+      }
+    }
     if (resultCache.size > 100) resultCache.clear();
     resultCache.set(cacheKey, { at: Date.now(), assets: ordered, enabled });
+    writeLocalCache(cacheKey, ordered);
     call('log_debug', `cross-search "${query}": ${ordered.length} asset(s) from ${[...new Set(ordered.map((a) => a.source))].join(', ') || 'none'}`).catch(() => undefined);
     return ordered;
   };

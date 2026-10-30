@@ -13,8 +13,8 @@ import {
   SliderField,
   TextField,
 } from '@decky/ui';
-import { FileSelectionType, openFilePicker } from '@decky/api';
-import { useState, useEffect, VFC, useCallback } from 'react';
+import { call, FileSelectionType, openFilePicker } from '@decky/api';
+import { useState, useEffect, VFC, useCallback, useRef } from 'react';
 
 import t from '../../utils/i18n';
 import TabSorter from '../TabSorter';
@@ -22,12 +22,18 @@ import useSettings, { SettingsProvider } from '../../hooks/useSettings';
 import { addHomePatch, removeHomePatch } from '../../patches/homePatch';
 import { addSquareLibraryPatch, removeSquareLibraryPatch } from '../../patches/squareLibraryPatch';
 import { addCapsuleGlowPatch } from '../../patches/capsuleGlowPatch';
-import { DIMENSIONS } from '../../constants';
+import { ASSET_TYPE, DIMENSIONS } from '../../constants';
 import { appgridClasses } from '../../static-classes';
 import { ALL_SOURCES, ExternalSource, SOURCE_NAMES, invalidateEnabledSources } from '../../utils/providers';
+import { isConfidentMatch, pickBestMatch } from '../../utils/matchGame';
+import { getSteamAppAssets, searchSteamApps } from '../../utils/steamAssets';
+import getCurrentSteamUserId from '../../utils/getCurrentSteamUserId';
+import log from '../../utils/log';
 
 import GuideVideoField from './GuideVideoField';
 import UpdateSection from './UpdateSection';
+
+const HEALTH_NAMES: Record<string, string> = { sgdb: 'SteamGridDB', ...SOURCE_NAMES };
 
 const tabSettingsDesc = t('MSG_ASSET_TAB_SETTINGS_DESC', 'Reorder or hide unused tabs, and set the default tab that opens when using "{ACTION_CHANGE_ARTWORK}"').replace('{ACTION_CHANGE_ARTWORK}', t('ACTION_CHANGE_ARTWORK', 'Change Artwork...'));
 const squareGridSizes = DIMENSIONS.grid_p.options.filter((x) => {
@@ -69,6 +75,112 @@ const QuickAccessSettings: VFC = () => {
     igdb: true,
     vndb: true,
   });
+  const [health, setHealth] = useState<Record<string, { ok: boolean; ms: number; error: string }> | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [importConfirm, setImportConfirm] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; applied: number; skipped: number; failed: number } | null>(null);
+  const bulkCancel = useRef(false);
+
+  const handleBulkApply = useCallback(async () => {
+    setBulkConfirm(false);
+    setBulkRunning(true);
+    bulkCancel.current = false;
+    const ownerId = getCurrentSteamUserId();
+    const apps = ((window.appStore as any)?.allApps || []) as any[];
+    const shortcuts = apps.filter((app) => {
+      try {
+        return typeof app?.BIsShortcut === 'function' ? app.BIsShortcut() : false;
+      } catch {
+        return false;
+      }
+    });
+    const progress = { done: 0, total: shortcuts.length, applied: 0, skipped: 0, failed: 0 };
+    setBulkProgress({ ...progress });
+
+    const kinds: { kind: SGDBAssetType; type: number }[] = [
+      { kind: 'grid_p', type: ASSET_TYPE.grid_p },
+      { kind: 'grid_l', type: ASSET_TYPE.grid_l },
+      { kind: 'hero', type: ASSET_TYPE.hero },
+      { kind: 'logo', type: ASSET_TYPE.logo },
+    ];
+
+    for (const app of shortcuts) {
+      if (bulkCancel.current) break;
+      progress.done += 1;
+      try {
+        // Never touch a game that already has custom artwork.
+        const state = await call<[number, string], Record<string, boolean>>('custom_artwork_state', app.appid, ownerId);
+        if (state && Object.values(state).some(Boolean)) {
+          progress.skipped += 1;
+        } else {
+          const best = pickBestMatch(app.display_name, await searchSteamApps(app.display_name));
+          if (!best || !isConfidentMatch(app.display_name, best.name)) {
+            progress.skipped += 1;
+          } else {
+            const assets = await getSteamAppAssets(best.appid);
+            let appliedAny = false;
+            for (const { kind, type } of kinds) {
+              const asset = (assets?.assets as any)?.[kind];
+              if (!asset?.url) continue;
+              try {
+                const data = await call<[string], string>('download_as_base64', asset.url);
+                await (window as any).SteamClient.Apps.SetCustomArtworkForApp(app.appid, data, 'png', type);
+                appliedAny = true;
+              } catch (err) {
+                log('bulk apply failed', kind, err);
+              }
+            }
+            if (appliedAny) progress.applied += 1;
+            else progress.skipped += 1;
+          }
+        }
+      } catch (err) {
+        log('bulk apply failed', app.display_name, err);
+        progress.failed += 1;
+      }
+      setBulkProgress({ ...progress });
+    }
+    setBulkRunning(false);
+  }, []);
+
+  const handleHealthCheck = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const result = await call<[], Record<string, { ok: boolean; ms: number; error: string }>>('source_health');
+      setHealth(result || {});
+    } catch (err: any) {
+      setHealth({});
+      setBackupMessage(err?.message || '');
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
+  const handleExportSettings = useCallback(async () => {
+    try {
+      const result = await call<[], { ok: boolean; path?: string; count?: number; error?: string }>('export_settings');
+      setBackupMessage(result?.ok
+        ? t('MSG_EXPORT_DONE', 'Saved {count} entries to {path}').replace('{count}', String(result.count)).replace('{path}', result.path || '')
+        : t('MSG_EXPORT_FAILED', 'Export failed: {error}').replace('{error}', result?.error || ''));
+    } catch (err: any) {
+      setBackupMessage(t('MSG_EXPORT_FAILED', 'Export failed: {error}').replace('{error}', err?.message || ''));
+    }
+  }, []);
+
+  const handleImportSettings = useCallback(async () => {
+    setImportConfirm(false);
+    try {
+      const result = await call<[string], { ok: boolean; count?: number; error?: string }>('import_settings', '');
+      setBackupMessage(result?.ok
+        ? t('MSG_IMPORT_DONE', 'Restored {count} entries').replace('{count}', String(result.count))
+        : t('MSG_IMPORT_FAILED', 'Import failed: {error}').replace('{error}', result?.error || ''));
+    } catch (err: any) {
+      setBackupMessage(t('MSG_IMPORT_FAILED', 'Import failed: {error}').replace('{error}', err?.message || ''));
+    }
+  }, []);
 
   const handleSourceToggle = useCallback((source: ExternalSource, value: boolean) => {
     const next = { ...sourcesEnabled, [source]: value };
@@ -339,6 +451,112 @@ const QuickAccessSettings: VFC = () => {
             onChange={handleMotdToggle}
           />
         </PanelSectionRow>
+      </PanelSection>
+      <PanelSection title={t('LABEL_BULK_TITLE', 'Bulk artwork for shortcuts')}>
+        <PanelSectionRow>
+          <div style={{ fontSize: '12px', padding: '4px 0' }}>
+            {t('LABEL_BULK_DESC', 'Fills capsule, wide capsule, hero and logo for non-Steam shortcuts without custom artwork, using the matching Steam app. Games without a confident match are skipped.')}
+          </div>
+        </PanelSectionRow>
+        {bulkProgress ? (
+          <PanelSectionRow>
+            <div style={{ fontSize: '12px', padding: '4px 0' }}>
+              {t('MSG_BULK_PROGRESS', '{done}/{total}: applied {applied}, skipped {skipped}, failed {failed}')
+                .replace('{done}', String(bulkProgress.done))
+                .replace('{total}', String(bulkProgress.total))
+                .replace('{applied}', String(bulkProgress.applied))
+                .replace('{skipped}', String(bulkProgress.skipped))
+                .replace('{failed}', String(bulkProgress.failed))}
+            </div>
+          </PanelSectionRow>
+        ) : null}
+        {bulkRunning ? (
+          <PanelSectionRow>
+            <DialogButton onClick={() => { bulkCancel.current = true; }}>
+              {t('ACTION_BULK_CANCEL', 'Stop')}
+            </DialogButton>
+          </PanelSectionRow>
+        ) : bulkConfirm ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: '12px', padding: '4px 0' }}>
+                {t('MSG_BULK_CONFIRM', 'Apply Steam artwork to every non-Steam shortcut without custom artwork? Library artwork will change.')}
+              </div>
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <DialogButton onClick={handleBulkApply}>{t('ACTION_BULK_CONFIRM', 'Apply')}</DialogButton>
+              <DialogButton onClick={() => setBulkConfirm(false)}>{t('ACTION_CANCEL', 'Cancel')}</DialogButton>
+            </PanelSectionRow>
+          </>
+        ) : (
+          <PanelSectionRow>
+            <DialogButton onClick={() => setBulkConfirm(true)}>
+              {t('ACTION_BULK_APPLY', 'Fill shortcut artwork')}
+            </DialogButton>
+          </PanelSectionRow>
+        )}
+      </PanelSection>
+
+      <PanelSection title={t('LABEL_HEALTH_TITLE', 'Source Status')}>
+        <PanelSectionRow>
+          <div style={{ fontSize: '12px', padding: '4px 0' }}>
+            {t('LABEL_HEALTH_DESC', 'Ping every artwork source and show which ones answer right now.')}
+          </div>
+        </PanelSectionRow>
+        {health
+          ? Object.entries(health).map(([source, value]) => (
+            <PanelSectionRow key={source}>
+              <div className="source-health-row">
+                <span>{HEALTH_NAMES[source] || source}</span>
+                <span className={value.ok ? 'ok' : 'fail'}>
+                  {value.ok ? `${value.ms} ms` : (value.error || 'error')}
+                </span>
+              </div>
+            </PanelSectionRow>
+          ))
+          : null}
+        <PanelSectionRow>
+          <DialogButton onClick={handleHealthCheck} disabled={healthLoading}>
+            {healthLoading ? t('LABEL_HEALTH_CHECKING', 'Checking...') : t('ACTION_HEALTH_CHECK', 'Check sources')}
+          </DialogButton>
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title={t('LABEL_BACKUP_TITLE', 'Settings backup')}>
+        <PanelSectionRow>
+          <div style={{ fontSize: '12px', padding: '4px 0' }}>
+            {t('LABEL_BACKUP_DESC', 'Save per-game mappings and settings to ~/gameartwork-backup, or restore the latest backup.')}
+          </div>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <DialogButton onClick={handleExportSettings}>
+            {t('ACTION_EXPORT_SETTINGS', 'Save backup')}
+          </DialogButton>
+        </PanelSectionRow>
+        {importConfirm ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: '12px', padding: '4px 0' }}>
+                {t('MSG_IMPORT_CONFIRM', 'Restore the latest backup? Current per-game mappings and settings will be replaced.')}
+              </div>
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <DialogButton onClick={handleImportSettings}>{t('ACTION_IMPORT_CONFIRM', 'Restore')}</DialogButton>
+              <DialogButton onClick={() => setImportConfirm(false)}>{t('ACTION_CANCEL', 'Cancel')}</DialogButton>
+            </PanelSectionRow>
+          </>
+        ) : (
+          <PanelSectionRow>
+            <DialogButton onClick={() => setImportConfirm(true)}>
+              {t('ACTION_IMPORT_SETTINGS', 'Restore backup')}
+            </DialogButton>
+          </PanelSectionRow>
+        )}
+        {backupMessage ? (
+          <PanelSectionRow>
+            <div style={{ fontSize: '12px', padding: '4px 0', opacity: 0.7 }}>{backupMessage}</div>
+          </PanelSectionRow>
+        ) : null}
       </PanelSection>
       {/* Uncomment this out should there be a need for experiments again. */}
       {/* <PanelSection title="Experiments">
