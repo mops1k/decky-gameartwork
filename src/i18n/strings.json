@@ -91,7 +91,7 @@
   "LABEL_OTHER_SOURCES": "Other sources",
   "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
   "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
-  "LABEL_IGDB_HINT": "Optional: enables IGDB artwork for console and indie games. Create an app at dev.twitch.tv → Register Your Application.",
+  "LABEL_IGDB_HINT": "Optional: Twitch Client ID/Secret switches IGDB to the official API. Leave both empty to read igdb.com without a key (experimental: cover and screenshots only).",
   "LABEL_APPLIED": "Applied",
   "LABEL_SOURCE_ALL": "All",
   "MSG_LOADING_SOURCES": "Loading sources...",

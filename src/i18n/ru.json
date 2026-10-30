@@ -91,7 +91,7 @@
   "LABEL_OTHER_SOURCES": "Другие источники",
   "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
   "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
-  "LABEL_IGDB_HINT": "Необязательно: включает IGDB для консольных и инди-игр. Создайте приложение на dev.twitch.tv → Register Your Application.",
+  "LABEL_IGDB_HINT": "Необязательно: Twitch Client ID/Secret переключает IGDB на официальный API. Оставьте оба поля пустыми, чтобы брать данные с сайта igdb.com без ключа (экспериментально: только обложка и скриншоты).",
   "LABEL_UPDATE_TITLE": "Обновление плагина",
   "LABEL_UPDATE_SECTION": "GameArtwork v{version}",
   "LABEL_UPDATE_INSTALLED": "Установлено v{version}",

@@ -47,8 +47,9 @@ Browse and apply game artwork from several sources without leaving Gaming Mode:
   `~/gameartwork-backup` and can be restored from the same panel.
 - **Bulk shortcut artwork** — fills the missing artwork of non-Steam shortcuts
   from Steam, skipping games with custom art or without a confident match.
-- **IGDB support** (optional) — console and indie games that are missing from the
-  stores can be pulled from IGDB with your own Twitch API credentials.
+- **IGDB support** — console and indie games that are missing from the stores
+  can be pulled from IGDB; a free Twitch API key is optional, without one the
+  plugin reads the public igdb.com pages (covers and screenshots).
 - **Manual Steam AppID** — if a store search finds nothing, paste a Steam AppID
   and its artwork is used directly.
 - **Relaxed-filter fallback** — when the current style/dimension filter returns
@@ -98,7 +99,7 @@ The plugin updates itself without leaving Game Mode:
 
 ## Configuration
 
-The plugin works without any keys for SteamGridDB, Steam, Epic, GOG and VNDB.
+The plugin works without any keys for SteamGridDB, Steam, Epic, GOG, IGDB and VNDB.
 
 - **SteamGridDB API key** — add it in the plugin's Quick Access settings if SGDB
   requests are rate-limited or rejected.
@@ -106,7 +107,9 @@ The plugin works without any keys for SteamGridDB, Steam, Epic, GOG and VNDB.
   the Steam / Epic / GOG / IGDB / VNDB lookups on and off individually.
 - **IGDB (optional)** — register an application at
   [dev.twitch.tv](https://dev.twitch.tv/console/apps) and paste its *Client ID*
-  and *Client Secret* into the **IGDB** section of the plugin settings.
+  and *Client Secret* into the **IGDB** section of the plugin settings to use the
+  official API. When both fields are empty the plugin reads the public igdb.com
+  pages instead: covers and screenshots work, key art is API-only.
 
 ## Usage
 

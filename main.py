@@ -7,8 +7,9 @@ from platform import system
 
 from os import W_OK, access, stat
 from stat import FILE_ATTRIBUTE_HIDDEN
-from urllib.request import Request, urlopen
-from urllib.parse import urlparse, urlencode
+from http.cookiejar import CookieJar
+from urllib.request import Request, urlopen, build_opener, HTTPCookieProcessor, HTTPSHandler
+from urllib.parse import urlparse, urlencode, quote
 from base64 import b64encode
 from pathlib import Path
 from shutil import copyfile
@@ -189,6 +190,147 @@ def igdb_image_url(url, size):
         url = "https:" + url
     return re.sub(r"/t_[a-z0-9_]+/", "/%s/" % size, url)
 
+# IGDB without a Twitch key: the website renders the same data server-side.
+# Search answers with a JSON blob, a game page carries a schema.org VideoGame
+# block; key art (artworks) is only available through the official API.
+IGDB_WEB_BASE = "https://www.igdb.com"
+IGDB_WEB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+IGDB_WEB_DETAIL_LIMIT = 5
+IGDB_WEB_SCREENSHOT_LIMIT = 6
+_IGDB_WEB_OPENER = None
+
+
+def igdb_cloudinary_id(url):
+    match = re.search(r"/([a-z0-9]{4,})\.(?:webp|jpg|jpeg|png)$", url or "")
+    return match.group(1) if match else ""
+
+
+def _igdb_web_opener():
+    """igdb.com is behind Cloudflare: keep its cookies between requests."""
+    global _IGDB_WEB_OPENER
+    if _IGDB_WEB_OPENER is None:
+        _IGDB_WEB_OPENER = build_opener(
+            HTTPCookieProcessor(CookieJar()),
+            HTTPSHandler(context=get_ssl_context()),
+        )
+    return _IGDB_WEB_OPENER
+
+
+def igdb_web_get(path, timeout=25, retries=1):
+    url = path if path.startswith("http") else IGDB_WEB_BASE + path
+    attempt = 0
+    while True:
+        try:
+            request = Request(url, headers=IGDB_WEB_HEADERS)
+            with _igdb_web_opener().open(request, timeout=timeout) as res:
+                return res.status, res.read().decode("utf-8", "replace")
+        except Exception:
+            # Cloudflare answers with a stray 404 now and then: one retry with
+            # the session cookies is enough to get the real page.
+            if attempt >= retries:
+                raise
+            attempt += 1
+            time.sleep(1.2)
+
+
+def igdb_web_search(term, limit=10):
+    """Search igdb.com without a key: React on Rails embeds the JSON."""
+    status, body = igdb_web_get("/search?q=%s" % quote(term))
+    found = []
+    for raw in re.findall(r'<script type="application/json" class="js-react-on-rails-component"[^>]*>(.*?)</script>', body, re.S):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        games = data.get("games") if isinstance(data, dict) else None
+        if isinstance(games, list) and games:
+            found = games
+            break
+    results = []
+    for item in found[:limit]:
+        slug = (item.get("slug") or "").strip()
+        if not slug:
+            continue
+        results.append({
+            "id": str(item.get("id") or slug),
+            "name": item.get("name") or "",
+            "slug": slug,
+            "cover": item.get("cloudinary_cover") or "",
+        })
+    return results
+
+
+def igdb_web_game_details(slug):
+    """schema.org VideoGame block of a game page: cover and screenshots."""
+    status, body = igdb_web_get("/games/%s" % (slug or ""))
+    for raw in re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', body, re.S):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("@type") == "VideoGame":
+            return data
+    return None
+
+
+def igdb_web_images(cover_id, details):
+    """Map the website block to the asset types the plugin knows."""
+    images = {}
+    extras = []
+    details = details or {}
+    if not cover_id:
+        cover_id = igdb_cloudinary_id((details.get("image") or {}).get("contentUrl"))
+    if cover_id:
+        images["grid_p"] = {
+            "url": "https://images.igdb.com/igdb/image/upload/t_cover_big_2x/%s.jpg" % cover_id,
+            "width": 528,
+            "height": 748,
+        }
+
+    shots = []
+    for shot in details.get("screenshot") or []:
+        url = (shot or {}).get("contentUrl") or ""
+        if not url:
+            continue
+        # The 1080p transform is what the official API uses for IGDB artwork.
+        shots.append({
+            "url": url.replace("/t_original/", "/t_1080p/"),
+            "width": shot.get("width") or 1920,
+            "height": shot.get("height") or 1080,
+        })
+    if shots:
+        images["hero"] = shots[0]
+        extras.extend(dict(shot, kind="hero") for shot in shots[1:IGDB_WEB_SCREENSHOT_LIMIT])
+    if len(shots) > 1:
+        # No key art on the website: a wide screenshot is the closest match.
+        images["grid_l"] = shots[1]
+    return images, extras
+
+
+def igdb_web_games(term, limit=10):
+    """Keyless IGDB lookup: covers for every hit, screenshots for the first few."""
+    games = []
+    for index, item in enumerate(igdb_web_search(term, limit=limit)):
+        details = None
+        if index < IGDB_WEB_DETAIL_LIMIT:
+            try:
+                details = igdb_web_game_details(item["slug"])
+            except Exception as exc:
+                decky.logger.info("[gameartwork] igdb web page %r failed: %s" % (item["slug"], exc))
+        images, extras = igdb_web_images(item.get("cover"), details)
+        if not images:
+            continue
+        game = {"id": item["id"], "name": item["name"], "images": images}
+        if extras:
+            game["extras"] = extras
+        games.append(game)
+    return games
+
+
 def post_json(url: str, payload, headers=None, timeout: int = 20):
     body = json.dumps(payload).encode("utf-8")
     req_headers = {
@@ -344,7 +486,8 @@ class Plugin:
         async def check_igdb():
             client_id, client_secret = self._igdb_credentials()
             if not client_id or not client_secret:
-                raise RuntimeError('no Twitch Client ID/Secret in the plugin settings')
+                # Keyless mode: the public site is the source, so ping it.
+                return bool(igdb_web_search("portal", limit=1))
             token, igdb_client = await self._igdb_access_token()
             if not token:
                 raise RuntimeError('IGDB token request failed')
@@ -835,8 +978,13 @@ class Plugin:
             return cached
         token, client_id = await self._igdb_access_token()
         if not token:
-            decky.logger.info("[gameartwork] igdb skipped: no client id/secret")
-            return self._cache_set(key, [])
+            # No Twitch key: scrape the public site (cover + screenshots only).
+            decky.logger.info("[gameartwork] igdb keyless, reading igdb.com")
+            try:
+                return self._cache_set(key, igdb_web_games(term))
+            except Exception as exc:
+                decky.logger.warning("[gameartwork] igdb web search failed: %s" % exc)
+                return self._cache_set(key, [])
 
         body = 'search "%s"; fields id,name,cover.url,artworks.url,screenshots.url; limit 10;' % term.replace('"', ' ')
         req = Request(IGDB_GAMES_URL, data=body.encode("utf-8"), method="POST", headers={
@@ -855,7 +1003,11 @@ class Plugin:
                 decky.logger.info("[gameartwork] igdb offline, cached %r" % term)
                 return stale
             decky.logger.warning("[gameartwork] igdb request failed: %s" % exc)
-            return self._cache_set(key, [])
+            try:
+                return self._cache_set(key, igdb_web_games(term))
+            except Exception as web_exc:
+                decky.logger.warning("[gameartwork] igdb web search failed: %s" % web_exc)
+                return self._cache_set(key, [])
 
         games = []
         for item in items:
