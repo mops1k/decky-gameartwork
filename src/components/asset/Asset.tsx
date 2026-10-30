@@ -20,6 +20,7 @@ export interface AssetProps extends FooterLegendProps, Omit<FocusableProps, 'chi
   onActivate?: FocusableProps['onActivate'];
   scrollContainer?: Element;
   notes?: string;
+  sourceName?: string;
   nsfw?: boolean;
   humor?: boolean;
   epilepsy?: boolean;
@@ -37,6 +38,7 @@ const Asset: FC<AssetProps> = ({
   isDownloading = false,
   scrollContainer,
   notes = null,
+  sourceName,
   nsfw,
   humor,
   epilepsy,
@@ -52,6 +54,9 @@ const Asset: FC<AssetProps> = ({
     >
       <div className={joinClassNames('dload-overlay', isDownloading ? 'downloading' : '')}><img src={Spinner} /></div>
       <Chips>
+        {sourceName ? (
+          <Chip color="#4e9ac6">{sourceName}</Chip>
+        ) : null}
         {notes ? (
           <Chip color="#8a8a8a">
             <AdaptiveNavGlyph button={11} bAllowKeyboard /> {t('LABEL_NOTES', 'Notes')}

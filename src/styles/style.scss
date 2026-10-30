@@ -152,6 +152,69 @@
     @include mixins.asset;
   }
 
+  .external-game-value {
+    margin-top: .3em;
+  }
+
+  .gameselect-section-title {
+    margin: .25em 0 .5em;
+    font-weight: 600;
+    opacity: .8;
+    text-transform: uppercase;
+    font-size: .8em;
+    letter-spacing: .05em;
+  }
+
+  .gameselect-source {
+    display: inline-block;
+    min-width: 4em;
+    color: #4e9ac6;
+    font-weight: 600;
+  }
+
+  .steam-assets-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .6em;
+    padding: .5em .25em;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+
+    .steam-assets-title {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .steam-assets-hint {
+      opacity: .7;
+    }
+  }
+
+  .steam-assets-items {
+    display: flex;
+    gap: .5em;
+
+    .steam-assets-item {
+      width: auto;
+      padding: 0;
+      overflow: hidden;
+      min-width: auto;
+
+      img {
+        display: block;
+        width: auto;
+        max-width: 260px;
+        object-fit: contain;
+      }
+
+      &.grid_p img { height: 96px; }
+      &.grid_l img { height: 56px; }
+      &.hero img { height: 56px; }
+      &.icon img { height: 40px; }
+    }
+  }
+
   #local-images-container {
     display: grid;
     grid-template-columns: 30% 1fr;

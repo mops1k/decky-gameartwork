@@ -78,5 +78,18 @@
   "LABEL_MOTD_ALL": "Все оповещения",
   "MSG_ASSET_APPLY_SUCCESS": "{assetType} успешно применен!",
   "MSG_ASSET_APPLY_ERROR": "Возникла проблема с добавлением этого файла.",
-  "ACTION_OPEN_DETAILS": "Детали"
+  "ACTION_OPEN_DETAILS": "Детали",
+  "LABEL_STEAM_SOURCE": "Steam",
+  "LABEL_SEARCH_STEAM": "Поиск в магазине Steam",
+  "LABEL_STEAM_APPID": "Или введите AppID Steam вручную",
+  "LABEL_STEAM_NO_ASSET": "В Steam нет {assetType} для {name}",
+  "LABEL_SEARCHING": "Поиск...",
+  "ACTION_FIND_IN_STEAM": "Найти в Steam",
+  "ACTION_CHANGE_STEAM_GAME": "Сменить",
+  "ACTION_APPLY_APPID": "Выбрать",
+  "MSG_FILTERS_RELAXED": "С текущими фильтрами ничего нет — показаны все варианты",
+  "LABEL_OTHER_SOURCES": "Другие источники",
+  "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
+  "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
+  "LABEL_IGDB_HINT": "Необязательно: включает IGDB для консольных и инди-игр. Создайте приложение на dev.twitch.tv → Register Your Application."
 }

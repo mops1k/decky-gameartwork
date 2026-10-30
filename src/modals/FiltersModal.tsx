@@ -31,6 +31,8 @@ const FiltersModal: FC<{
   defaultSelectedGame: any;
   defaultSearchTerm: string;
   searchGames: (term: string) => Promise<any[]>;
+  onSelectExternal?: (name: string) => void;
+  externalTerm?: string | null;
 }> = ({
   closeModal,
   assetType,
@@ -40,6 +42,8 @@ const FiltersModal: FC<{
   defaultSelectedGame,
   defaultSearchTerm,
   searchGames,
+  onSelectExternal,
+  externalTerm,
 }) => {
   const [styles, setStyles] = useState<string[]>(defaultFilters?.styles ?? STYLES[assetType].default);
   const [mimes, setMimes] = useState<string[]>(defaultFilters?.mimes ?? MIMES[assetType].default);
@@ -55,6 +59,7 @@ const FiltersModal: FC<{
   }), [styles, dimensions, mimes, animated, _static, adult, humor, epilepsy, untagged]);
 
   const [selectedGame, setSelectedGame] = useState(defaultSelectedGame);
+  const [externalName, setExternalName] = useState<string | null>(externalTerm || null);
 
   /* Controls if the adult content desc shows, only want it to show when it gets toggled and not just when `adult` is true. */
   const [adultActivated, setAdultActivated] = useState<boolean>(false);
@@ -99,17 +104,24 @@ const FiltersModal: FC<{
                 onClick={() => {
                   showModal(
                     <GameSelectionModal
-                      defaultTerm={selectedGame?.name || defaultSearchTerm}
+                      defaultTerm={externalName || selectedGame?.name || defaultSearchTerm}
                       searchGames={searchGames}
                       onSelect={(game: any) => {
                         setSelectedGame(game);
+                        setExternalName(null);
+                        onSelectExternal?.('');
+                      }}
+                      onSelectExternal={(name: string) => {
+                        setSelectedGame(undefined);
+                        setExternalName(name);
+                        onSelectExternal?.(name);
                       }}
                     />
                   );
                 }}
               >
                 <Marquee>
-                  {selectedGame?.name || t('LABEL_GAME_SEARCH_TITLE', 'Search for a Game...')}
+                  {externalName || selectedGame?.name || t('LABEL_GAME_SEARCH_TITLE', 'Search for a Game...')}
                 </Marquee>
               </DialogButton>
               {(selectedGame && !isNonsteam) && (

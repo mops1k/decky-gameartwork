@@ -1,11 +1,19 @@
 {
   "api_version": 1,
-  "name": "SteamGridDB",
-  "author": "SteamGridDB",
-  "flags": ["debug"],
+  "name": "GameArtwork",
+  "author": "mops1k (fork of SteamGridDB/decky-steamgriddb)",
+  "flags": [
+    "debug"
+  ],
   "publish": {
-    "tags": ["artwork", "sgdb"],
-    "description": "Customize your library with user-submitted images or local files, and other style tweaks like square capsules, uniform sizing, and more!",
-    "image": "https://raw.githubusercontent.com/SteamGridDB/decky-steamgriddb/main/thumb.png"
-  }
+    "tags": [
+      "artwork",
+      "steam",
+      "epic",
+      "sgdb"
+    ],
+    "description": "One search for game artwork across SteamGridDB, Steam, Epic Games Store, GOG, IGDB and VNDB — right in Gaming Mode.",
+    "image": "https://raw.githubusercontent.com/mops1k/decky-gameartwork/main/thumb.png"
+  },
+  "version": "2.4.0"
 }

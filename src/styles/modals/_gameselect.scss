@@ -21,4 +21,56 @@
     margin: 0 auto;
     margin-top: 2em;
   }
+
+  .gameselect-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .6em;
+    width: 100%;
+  }
+
+  .gameselect-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .gameselect-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.7em;
+    height: 1.7em;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .1);
+    color: #d8d8d8;
+    font-size: .95em;
+
+    svg {
+      width: 1em;
+      height: 1em;
+    }
+
+    &.source-sgdb {
+      background: rgba(255, 255, 255, .14);
+      color: #c8c8c8;
+    }
+
+    &.source-steam { color: #c7d5e0; }
+    &.source-epic { color: #eeeeee; }
+    &.source-gog { color: #b48ce8; }
+    &.source-igdb { color: #c9a7ff; }
+    &.source-vndb { color: #a0c4e8; }
+  }
+
+  .gameselect-empty {
+    opacity: .7;
+    padding: .5em;
+    text-align: center;
+  }
 }

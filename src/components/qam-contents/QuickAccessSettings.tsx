@@ -11,6 +11,7 @@ import {
   DialogBodyText,
   ToggleField,
   SliderField,
+  TextField,
 } from '@decky/ui';
 import { FileSelectionType, openFilePicker } from '@decky/api';
 import { useState, useEffect, VFC, useCallback } from 'react';
@@ -69,6 +70,18 @@ const QuickAccessSettings: VFC = () => {
   const [motdToggle, setMotdToggle] = useState<boolean>(false);
   const [capsuleGlowAmount, setCapsuleGlowAmount] = useState(100);
   const [debugAppid] = useState('70');
+  const [igdbClientId, setIgdbClientId] = useState('');
+  const [igdbClientSecret, setIgdbClientSecret] = useState('');
+
+  const handleIgdbClientId = useCallback((value: string) => {
+    setIgdbClientId(value);
+    set('igdb_client_id', value);
+  }, [set]);
+
+  const handleIgdbClientSecret = useCallback((value: string) => {
+    setIgdbClientSecret(value);
+    set('igdb_client_secret', value);
+  }, [set]);
 
   const handleMotdToggle = useCallback(async (val: boolean) => {
     set('motd_hidden_global', val, true);
@@ -115,6 +128,8 @@ const QuickAccessSettings: VFC = () => {
       setUniformFeatured(await get('uniform_featured', false));
       setCapsuleGlowAmount(await get('capsule_glow_amount', 100));
       setMotdToggle(await get('motd_hidden_global', false));
+      setIgdbClientId(await get('igdb_client_id', ''));
+      setIgdbClientSecret(await get('igdb_client_secret', ''));
     })();
   }, [get]);
 
@@ -204,6 +219,24 @@ const QuickAccessSettings: VFC = () => {
           </PanelSectionRow>
         </PanelSection>
       )}
+      <PanelSection title="IGDB">
+        <PanelSectionRow>
+          <Field
+            label={t('LABEL_IGDB_CLIENT_ID', 'Twitch Client ID')}
+            description={t('LABEL_IGDB_HINT', 'Optional: enables IGDB artwork for console and indie games. Create an app at dev.twitch.tv → Register Your Application.')}
+            childrenLayout="below"
+            bottomSeparator="none"
+          >
+            <TextField value={igdbClientId} onChange={(evt) => handleIgdbClientId(evt.target.value)} spellCheck={false} />
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field label={t('LABEL_IGDB_CLIENT_SECRET', 'Twitch Client Secret')} childrenLayout="below">
+            <TextField value={igdbClientSecret} onChange={(evt) => handleIgdbClientSecret(evt.target.value)} spellCheck={false} />
+          </Field>
+        </PanelSectionRow>
+      </PanelSection>
+
       <PanelSection title={t('Settings', 'Settings', true)}>
         <PanelSectionRow>
           <ToggleField

@@ -46,7 +46,7 @@ export default definePlugin(() => {
   });
 
   return {
-    title: <div className={quickAccessMenuClasses.Title}>SteamGridDB</div>,
+    title: <div className={quickAccessMenuClasses.Title}>GameArtwork</div>,
     content: <SettingsProvider><QuickAccessSettings /></SettingsProvider>,
     icon: <MenuIcon />,
     onDismount() {

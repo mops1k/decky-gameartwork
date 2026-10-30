@@ -78,5 +78,18 @@
   "LABEL_MOTD_ALL": "All Announcements",
   "MSG_ASSET_APPLY_SUCCESS": "{assetType} has been successfully applied!",
   "MSG_ASSET_APPLY_ERROR": "There was a problem applying this asset.",
-  "ACTION_OPEN_DETAILS": "Details"
+  "ACTION_OPEN_DETAILS": "Details",
+  "LABEL_STEAM_SOURCE": "Steam",
+  "LABEL_SEARCH_STEAM": "Search Steam store",
+  "LABEL_STEAM_APPID": "Or enter Steam AppID manually",
+  "LABEL_STEAM_NO_ASSET": "Steam has no {assetType} for {name}",
+  "LABEL_SEARCHING": "Searching...",
+  "ACTION_FIND_IN_STEAM": "Find in Steam",
+  "ACTION_CHANGE_STEAM_GAME": "Change",
+  "ACTION_APPLY_APPID": "Use",
+  "MSG_FILTERS_RELAXED": "No results with the current filters, showing all variants",
+  "LABEL_OTHER_SOURCES": "Other sources",
+  "LABEL_IGDB_CLIENT_ID": "Twitch Client ID",
+  "LABEL_IGDB_CLIENT_SECRET": "Twitch Client Secret",
+  "LABEL_IGDB_HINT": "Optional: enables IGDB artwork for console and indie games. Create an app at dev.twitch.tv → Register Your Application."
 }

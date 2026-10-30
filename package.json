@@ -1,7 +1,7 @@
 {
-  "name": "decky-steamgriddb",
-  "version": "1.8.1",
-  "description": "Decky plugin to manage Steam artwork from within gaming mode.",
+  "name": "gameartwork",
+  "version": "2.4.0",
+  "description": "Decky plugin that cross-searches game artwork from several sources in Gaming Mode.",
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c --environment ROLLUP_ENV:production",
@@ -15,8 +15,11 @@
     "prepare": "husky install",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "repository": "github:SteamGridDB/decky-steamgriddb",
+  "repository": "github:mops1k/decky-gameartwork",
   "keywords": [
+    "steam-epic-gog",
+    "artwork",
+    "gameartwork",
     "decky",
     "plugin",
     "steam-deck",
@@ -34,21 +37,11 @@
       "email": "Tormak9970@gmail.com"
     }
   ],
-  "funding": [
-    {
-      "type": "patreon",
-      "url": "https://www.patreon.com/steamgriddb"
-    },
-    {
-      "type": "ko-fi",
-      "url": "https://ko-fi.com/steamgriddb"
-    }
-  ],
   "license": "GPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/SteamGridDB/decky-steamgriddb/issues"
+    "url": "https://github.com/mops1k/decky-gameartwork/issues"
   },
-  "homepage": "https://github.com/SteamGridDB/decky-steamgriddb#readme",
+  "homepage": "https://github.com/mops1k/decky-gameartwork#readme",
   "devDependencies": {
     "@commitlint/cli": "^17.8.1",
     "@commitlint/config-conventional": "^17.8.1",

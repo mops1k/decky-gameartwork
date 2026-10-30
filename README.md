@@ -1,16 +1,41 @@
 <div align="center">
 <img src="thumb.png">
 
-[![Crowdin](https://badges.crowdin.net/decky-steamgriddb/localized.svg)](https://crowdin.com/project/decky-steamgriddb) [![Discord](https://img.shields.io/discord/488621078302949377?color=5865F2\&label=discord)](https://discord.gg/bnSVJrz) [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-informational)](LICENSE) ![Decky Loader](https://img.shields.io/badge/dynamic/json?url=https://plugins.deckbrew.xyz/plugins?query=SteamGridDB&query=$[:1].downloads&suffix=%20installs&label=decky&color=3ea6a3)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-informational)](LICENSE)
 </div>
 
-<h1 align="center">SteamGridDB plugin for Decky Loader</h1>
+<h1 align="center">GameArtwork — Decky Loader plugin</h1>
 
-Easily browse and manage Steam artwork from SteamGridDB or your local files from within gaming mode.
+Browse and apply game artwork from several sources without leaving Gaming Mode:
+**SteamGridDB**, **Steam**, **Epic Games Store**, **GOG**, **IGDB** and **VNDB**.
 
 <img src="docs/capsule.png" width="33.33%"><img src="docs/manage.png" width="33.33%"><img src="docs/filters.png" width="33.33%">
 
-## Features
+> **This is an extended fork of [SteamGridDB/decky-steamgriddb](https://github.com/SteamGridDB/decky-steamgriddb) (v1.8.1), not the upstream plugin.**
+> The original project only searches SteamGridDB; this fork keeps its UI and adds
+> cross-source search, store matching and a few quality-of-life fixes. All credit
+> for the original plugin, its translations and its design goes to the upstream
+> authors — see [Credits](#credits).
+
+## What this fork adds
+
+- **Cross-source search** — a single query looks up the game in Steam, Epic Games
+  Store, GOG and VNDB, and shows each store's official art next to the SGDB grid.
+- **Store matching** — the plugin matches the shortcut/library title against store
+  search results and applies a confidence check, so "Hollow Knight: Voidheart"
+  still resolves to the right game. A localized or renamed shortcut falls back to
+  the SteamGridDB title.
+- **IGDB support** (optional) — console and indie games that are missing from the
+  stores can be pulled from IGDB with your own Twitch API credentials.
+- **Manual Steam AppID** — if a store search finds nothing, paste a Steam AppID
+  and its artwork is used directly.
+- **Relaxed-filter fallback** — when the current style/dimension filter returns
+  nothing, the plugin retries once with every variant enabled and tells you so.
+- **Source labels** — every result is marked with its source (SteamGridDB, Steam,
+  Epic, GOG, IGDB, VNDB).
+
+## Features inherited from upstream
+
 - Browse assets from SteamGridDB for the selected game.
 - Support for non-Steam shortcuts and Source/GoldSrc mods.
 - Ability to change icons for Steam or non-Steam shortcuts.
@@ -21,30 +46,57 @@ Easily browse and manage Steam artwork from SteamGridDB or your local files from
 - Change capsule type of recently played game.
 
 ## Installation
-1. Install [Decky Loader](https://wiki.deckbrew.xyz/en/user-guide/install)
-2. Open the Quick Access menu
+
+1. Install [Decky Loader](https://wiki.deckbrew.xyz/en/user-guide/install).
+2. Open the Quick Access menu.
 3. Open the Plugins Browser <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/store-light.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/store-dark.svg">
     <img height="16px" alt="Store" src="docs/store-dark.svg">
     </picture>
-4. Find SteamGridDB then press "Install"
+4. Enable **Developer mode** (Settings → Developer) and install the plugin from
+   its GitHub repository URL, or download the packaged zip from
+   [Releases](../../releases) and install it from the same screen.
+
+The plugin is not in the Decky store: it is a personal fork and is installed
+manually.
+
+## Configuration
+
+The plugin works without any keys for SteamGridDB, Steam, Epic, GOG and VNDB.
+
+- **SteamGridDB API key** — add it in the plugin's Quick Access settings if SGDB
+  requests are rate-limited or rejected.
+- **IGDB (optional)** — register an application at
+  [dev.twitch.tv](https://dev.twitch.tv/console/apps) and paste its *Client ID*
+  and *Client Secret* into the **IGDB** section of the plugin settings.
 
 ## Usage
-Select "Change Artwork..." from a game context menu.  
 
-You can access the menu by focusing on a game in your library and pressing <picture><source media="(prefers-color-scheme: dark)" srcset="docs/start-light.svg"><source media="(prefers-color-scheme: light)" srcset="docs/start-dark.svg"><img height="16px" alt="Start" src="docs/start-dark.svg"></picture>.  
+Select "Change Artwork..." from a game context menu.
+
+You can open the menu by focusing on a game in your library and pressing <picture><source media="(prefers-color-scheme: dark)" srcset="docs/start-light.svg"><source media="(prefers-color-scheme: light)" srcset="docs/start-dark.svg"><img height="16px" alt="Start" src="docs/start-dark.svg"></picture>.
 Or by using the <picture><source media="(prefers-color-scheme: dark)" srcset="docs/menucog-light.svg"><source media="(prefers-color-scheme: light)" srcset="docs/menucog-dark.svg"><img height="16px" alt="Cog" src="docs/menucog-dark.svg"></picture> button on a game page.
 
-<img src="docs/gamecontextmenu.png" height="300px">  
+<img src="docs/gamecontextmenu.png" height="300px">
+
+Shortcuts that SteamGridDB cannot match are matched by the stores instead; use
+the source section of the game selection dialog to switch between stores or to
+search a Steam AppID manually.
 
 # Credits
-**Early Testing:** Emenesu, Mr. Mendelli  
-**Development Help:** [SDH Discord](https://discord.gg/ZU74G2NJzk)  
+
+This project is an extended fork of
+[**SteamGridDB/decky-steamgriddb**](https://github.com/SteamGridDB/decky-steamgriddb)
+(GPL-3.0-or-later). Original copyright and licensing are kept in [LICENSE](LICENSE).
+
+**Upstream authors:** Jozen Blue Martinez and contributors.
+**Early Testing:** Emenesu, Mr. Mendelli
+**Development Help:** [SDH Discord](https://discord.gg/ZU74G2NJzk)
 **Localisation:**
 https://crowdin.com/project/decky-steamgriddb
-| Language | Translators | ![total progress](https://badges.crowdin.net/decky-steamgriddb/localized.svg) |
-| - | - | -: |
+| Language | Translators |
+| - | - |
 | **Čeština** | zenobit, theczechczech |
 | **Dansk** | Jakob Frank Mogensen |
 | **Deutsch** | Kurikuo, benutzer_artur7, Anja, FL0W, Remirax, LittleFreak, 'bignutty, Tom Taylor |
@@ -70,6 +122,6 @@ https://crowdin.com/project/decky-steamgriddb
 | **正體中文** | mingyc |
 | **简体中文** | zhzy0077, XHXIAIEIN, simon3000 |
 
-## Completion Chart
-[![Completion Chart](https://badges.awesome-crowdin.com/translation-14343274-548275.png)](https://badges.awesome-crowdin.com/translation-14343274-548275.png)
-[Full size](https://badges.awesome-crowdin.com/translation-14343274-548275.png)
+## License
+
+GPL-3.0-or-later, same as upstream. See [LICENSE](LICENSE).

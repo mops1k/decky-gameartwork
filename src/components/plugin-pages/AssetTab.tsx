@@ -11,6 +11,7 @@ import DetailsModal from '../../modals/DetailsModal';
 import { SGDB_ASSET_TYPE_READABLE } from '../../constants';
 import useAssetSearch from '../../hooks/useAssetSearch';
 import useSettings from '../../hooks/useSettings';
+import useExternalAssets from '../../hooks/useExternalAssets';
 import ResultsStateBar from '../ResultsStateBar';
 import LogoPositionerModal from '../../modals/LogoPositionerModal';
 import OfficialAssetsModal from '../../modals/OfficialAssetsModal';
@@ -28,13 +29,25 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
     selectedGame,
     externalSgdbData,
     endReached,
+    externalTerm,
   } = useAssetSearch();
   const { appOverview, changeAssetFromUrl } = useSGDB();
-  const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | number | null>(null);
   const [sizingStyles, setSizingStyles] = useState<any>(undefined);
   const [tabLoading, setTabLoading] = useState(true);
   const [scrollContainerHeight, setScrollContainerHeight] = useState<string>();
   const loading = useMemo(() => !(!searchLoading && !tabLoading), [searchLoading, tabLoading]);
+
+  // Cross-search every built-in source by the game title, transparently.
+  // The shortcut name is what the user actually sees in the library; a wrong
+  // SGDB mapping must not redirect the cross-search.
+  const searchTerm = externalTerm || appOverview?.display_name;
+  const fallbackTerm = selectedGame?.name;
+  const { assets: externalAssets, loading: externalLoading } = useExternalAssets(searchTerm, fallbackTerm);
+  const visibleExternalAssets = useMemo(
+    () => externalAssets.filter((asset) => asset.kind === assetType),
+    [externalAssets, assetType],
+  );
 
   const toolbarRef = useRef<ToolbarRefType>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -68,7 +81,7 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
     ), window);
   };
 
-  const setAsset = async (assetId: number, url: string) => {
+  const setAsset = async (assetId: string | number, url: string) => {
     if (!downloadingId) {
       try {
         setDownloadingId(assetId);
@@ -90,10 +103,6 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
       }
     }
   };
-
-  /* const focusSettings = () => {
-    toolbarRef.current?.focus();
-  }; */
 
   const openDetails = (asset: any) => {
     showModal((
@@ -203,9 +212,32 @@ const AssetTab: FC<{ assetType: SGDBAssetType }> = ({ assetType }) => {
                 }}
               />
             ))}
+            {visibleExternalAssets.map((asset) => (
+              <Asset
+                key={asset.id}
+                scrollContainer={mainContentRef.current?.parentElement?.parentElement as Element}
+                sourceName={asset.sourceName}
+                src={asset.thumb}
+                width={asset.width}
+                height={asset.height}
+                assetType={assetType}
+                isAnimated={false}
+                isDownloading={downloadingId === asset.id}
+                onActivate={() => setAsset(asset.id, asset.url)}
+                onOKActionDescription={t('ACTION_ASSET_APPLY', 'Apply {assetType}').replace('{assetType}', SGDB_ASSET_TYPE_READABLE[assetType])}
+                onMenuActionDescription={t('ACTION_OPEN_DETAILS', 'Details')}
+                onMenuButton={() => openDetails(asset)}
+                onContextMenu={(evt) => {
+                  evt.preventDefault();
+                  openDetails(asset);
+                }}
+              />
+            ))}
             {/* Load more if spinner in view */}
             <div ref={intersectRef} style={{ gridColumn: '1 / -1', height: '5px', marginBottom: scrollContainerHeight }} />
-            {assets.length === 0 && <div style={{ gridColumn: '1 / -1', justifySelf: 'center' }}>{t('Search_NoResults', 'No Results Found.', true)}</div>}
+            {assets.length === 0 && visibleExternalAssets.length === 0 && !externalLoading && (
+              <div style={{ gridColumn: '1 / -1', justifySelf: 'center' }}>{t('Search_NoResults', 'No Results Found.', true)}</div>
+            )}
           </>
         )}
       </Focusable>

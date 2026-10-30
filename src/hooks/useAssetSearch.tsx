@@ -20,6 +20,19 @@ import GameSelectionModal from '../modals/GameSelectionModal';
 import MenuIcon from '../components/Icons/MenuIcon';
 import log from '../utils/log';
 import compareFilterWithDefaults from '../utils/compareFilterWithDefaults';
+import { isConfidentMatch, pickBestMatch } from '../utils/matchGame';
+import t from '../utils/i18n';
+import { DIMENSIONS, MIMES, STYLES } from '../constants';
+
+/** Widest set of filters: every style, dimension and mime the source knows. */
+const getAllVariantsFilters = (assetType: SGDBAssetType, filters: any) => ({
+  ...(filters || {}),
+  styles: STYLES[assetType].options.map((option) => option.value),
+  dimensions: DIMENSIONS[assetType].options.map((option) => option.value),
+  mimes: MIMES[assetType].options.map((option) => option.value),
+  animated: true,
+  _static: true,
+});
 
 export type AssetSearchContextType = {
   loading: boolean;
@@ -33,6 +46,7 @@ export type AssetSearchContextType = {
   isFilterActive: boolean;
   moreLoading: boolean;
   endReached: boolean;
+  externalTerm: string | null;
 }
 
 export const SearchContext = createContext({});
@@ -51,6 +65,21 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
   const [moreLoading, setMoreLoading] = useState(false);
   const [endReached, setEndReached] = useState(false);
   const [page, setPage] = useState(0);
+  const [externalTerm, setExternalTerm] = useState<string | null>(null);
+
+  const selectExternalName = useCallback((name: string) => {
+    if (!name) {
+      setExternalTerm(null);
+      set(`external_name_${appId}`, false);
+      return;
+    }
+    // A store title replaces the SGDB match: mixing artwork of two different
+    // games in one grid would be confusing.
+    setSelectedGame(undefined);
+    set(`nonsteam_${appId}`, false);
+    setExternalTerm(name);
+    set(`external_name_${appId}`, name);
+  }, [appId, set]);
 
   const showGameSelection = useCallback(() => {
     showModal(
@@ -60,25 +89,57 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
         onSelect={(game: any) => {
           setSelectedGame(game);
           set(`nonsteam_${appId}`, game);
+          setExternalTerm(null);
+          set(`external_name_${appId}`, false);
         }}
+        onSelectExternal={selectExternalName}
       />
     );
-  }, [appId, appOverview.display_name, searchGames, set]);
+  }, [appId, appOverview.display_name, searchGames, set, selectExternalName]);
 
   const searchAndSetAssets = useMemo(() => debounce(async (assetType, page, filters, onSuccess) => {
-    if (appOverview?.BIsModOrShortcut() && !selectedGame) return;
+    // Shortcut without a matched SGDB game: nothing to request here, but the
+    // cross-source section still has to be rendered.
+    if (appOverview?.BIsModOrShortcut() && !selectedGame) {
+      setAssets([]);
+      onSuccess?.();
+      return;
+    }
     if (abortCont) abortCont?.abort();
     abortCont = new AbortController();
 
     try {
       setCurrentFilters(filters);
       setIsFilterActive(compareFilterWithDefaults(assetType, filters));
-      const resp = await searchAssets(assetType, {
+      let resp = await searchAssets(assetType, {
         gameId: selectedGame?.id,
         page,
         filters,
         signal: abortCont.signal,
       });
+
+      // Nothing matched: retry once with every style/dimension/mime enabled
+      // before telling the user the game has no artwork at all.
+      if (page === 0 && resp.length === 0) {
+        const relaxedFilters = getAllVariantsFilters(assetType, filters);
+        const relaxed = await searchAssets(assetType, {
+          gameId: selectedGame?.id,
+          page,
+          filters: relaxedFilters,
+          signal: abortCont.signal,
+        });
+        if (relaxed.length > 0) {
+          resp = relaxed;
+          setCurrentFilters(relaxedFilters);
+          setIsFilterActive(true);
+          toaster.toast({
+            title: appOverview?.display_name,
+            body: t('MSG_FILTERS_RELAXED', 'No results with the current filters, showing all variants'),
+            icon: <MenuIcon />,
+          });
+        }
+      }
+
       log('search resp', assetType, resp);
       setAssets(resp);
       setEndReached(false);
@@ -155,6 +216,10 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
       setSelectedGame(game ?? false);
       // save selected game to reuse for this shortcut
       set(`nonsteam_${appId}`, game ?? false);
+      if (game) {
+        setExternalTerm(null);
+        set(`external_name_${appId}`, false);
+      }
     }
     if (filtersChanged || gameChanged) {
       log('filtersChanged');
@@ -175,22 +240,37 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
         defaultSearchTerm={selectedGame?.name || appOverview.display_name}
         isNonsteam={appOverview.BIsModOrShortcut()}
         searchGames={searchGames}
+        onSelectExternal={selectExternalName}
+        externalTerm={externalTerm}
       />
     ), window);
-  }, [appOverview, get, handleFiltersSave, searchGames, selectedGame]);
+  }, [appOverview, get, handleFiltersSave, searchGames, selectedGame, selectExternalName, externalTerm]);
 
   useEffect(() => {
     if (!appOverview) return;
     (async () => {
       setLoading(true);
-      const game = await get(`nonsteam_${appId}`, false);
+      const savedGame = await get(`nonsteam_${appId}`, false);
+      const savedExternalTerm = await get(`external_name_${appId}`, null);
+      if (savedExternalTerm) setExternalTerm(savedExternalTerm);
+
+      // Older versions stored the first fuzzy hit even when it was a totally
+      // different game; ignore such mappings and match again.
+      const game = savedGame && savedGame.name && isConfidentMatch(appOverview.display_name, savedGame.name)
+        ? savedGame
+        : null;
+      if (savedGame && !game) {
+        set(`nonsteam_${appId}`, false);
+      }
       if (game) {
         setSelectedGame(game);
       } else {
         if (appOverview.BIsModOrShortcut()) {
           const gameRes = await searchGames(appOverview.display_name);
-          if (gameRes.length) {
-            setSelectedGame(gameRes[0]);
+          const bestMatch = pickBestMatch(appOverview.display_name, gameRes);
+          if (bestMatch) {
+            setSelectedGame(bestMatch);
+            set(`nonsteam_${appId}`, bestMatch);
           } else {
             showGameSelection();
           }
@@ -219,7 +299,8 @@ export const AssetSearchContext: FC<{ children: ReactNode }> = ({ children }) =>
     isFilterActive,
     moreLoading,
     endReached,
-  }), [loading, assets, searchAndSetAssets, loadMore, selectedGame, externalSgdbData, openFilters, isFilterActive, moreLoading, endReached]);
+    externalTerm,
+  }), [loading, assets, searchAndSetAssets, loadMore, selectedGame, externalSgdbData, openFilters, isFilterActive, moreLoading, endReached, externalTerm]);
 
   return (
     <SearchContext.Provider value={value}>

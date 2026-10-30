@@ -9,7 +9,7 @@ import {
   Focusable,
   IconsModule,
   Spinner,
-  Marquee,
+  joinClassNames,
 } from '@decky/ui';
 import {
   FC,
@@ -17,43 +17,13 @@ import {
   useState,
   useEffect,
   useRef,
-  VFC,
 } from 'react';
 import debounce from 'just-debounce';
-import { SiSteam, SiEpicgames, SiOrigin, SiUbisoft, SiBattledotnet } from 'react-icons/si';
-import { IconType } from 'react-icons';
 
 import t from '../utils/i18n';
-import FlashpointIcon from '../components/Icons/FlashpointIcon';
-import EshopIcon from '../components/Icons/EshopIcon';
-import GogIcon from '../components/Icons/GogIcon';
-
-const utcYear = (date: number) => new Date(date * 1000).toLocaleString('en-US', { year: 'numeric', timeZone: 'UTC' });
-
-const platformTypeMap: { [key: string]: IconType | VFC } = {
-  steam: SiSteam,
-  egs: SiEpicgames,
-  origin: SiOrigin,
-  uplay: SiUbisoft,
-  gog: GogIcon,
-  bnet: SiBattledotnet,
-  flashpoint: FlashpointIcon,
-  eshop: EshopIcon,
-};
-const GameLabel: FC<{game: any}> = ({ game }) => (
-  <span className="gamelabel">
-    <Marquee>{game.name}</Marquee>
-    {game.release_date && <span className="release-date">({utcYear(game.release_date)})</span>}
-    {(game.types.length > 0) && (
-      <span className="platform-types">
-        {game.types.map((x: string) => {
-          const PlatformLogo = platformTypeMap[x];
-          return <PlatformLogo key={x} />;
-        })}
-      </span>
-    )}
-  </span>
-);
+import { ExternalSource, ExternalTitle, SOURCE_NAMES, searchExternalTitles } from '../utils/providers';
+import { scoreMatch } from '../utils/matchGame';
+import SourceIcon from '../components/SourceIcon';
 
 const SearchTextField: FC<TextFieldProps> = (props) => {
   const fieldRef = useRef<any>();
@@ -105,15 +75,63 @@ const SearchTextField: FC<TextFieldProps> = (props) => {
 const GameSelectionModal: FC<{
   closeModal?: () => void,
   onSelect: (game: any) => void,
+  onSelectExternal?: (name: string) => void,
   searchGames: (term: string) => Promise<any[]>,
   defaultTerm: string,
-}> = ({ closeModal, onSelect, searchGames, defaultTerm }) => {
+}> = ({ closeModal, onSelect, onSelectExternal, searchGames, defaultTerm }) => {
   const [value, setValue] = useState(defaultTerm);
   const [games, setGames] = useState<any[]>([]);
+  const [externals, setExternals] = useState<ExternalTitle[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const handleGameSelect = (game: any) => {
-    onSelect?.(game);
+  type PickerItem = {
+    key: string;
+    name: string;
+    source: 'sgdb' | ExternalSource;
+    game?: any;
+    score: number;
+  };
+
+  // One list for every source: SGDB and the keyless stores are ranked by how
+  // well the title matches, and each row carries a source chip on the right.
+  const pickerItems = useMemo<PickerItem[]>(() => {
+    const items: PickerItem[] = [];
+    const seen = new Set<string>();
+    const push = (item: PickerItem) => {
+      const key = item.name.trim().toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      items.push(item);
+    };
+
+    for (const game of games) {
+      push({
+        key: `sgdb:${game.id}`,
+        name: game.name || '',
+        source: 'sgdb',
+        game,
+        score: scoreMatch(value, game.name || ''),
+      });
+    }
+    if (onSelectExternal) {
+      for (const title of externals) {
+        push({
+          key: `${title.source}:${title.name}`,
+          name: title.name,
+          source: title.source,
+          score: scoreMatch(value, title.name),
+        });
+      }
+    }
+    return items.sort((a, b) => b.score - a.score);
+  }, [games, externals, value, onSelectExternal]);
+
+  const handleItemSelect = (item: PickerItem) => {
+    if (item.source === 'sgdb') {
+      onSelect?.(item.game);
+    } else {
+      onSelectExternal?.(item.name);
+    }
     closeModal?.();
   };
 
@@ -122,10 +140,19 @@ const GameSelectionModal: FC<{
       setLoading(false);
       return;
     }
-    const resp = await searchGames(term);
+    const [resp, externalTitles] = await Promise.all([
+      searchGames(term),
+      onSelectExternal ? searchExternalTitles(term) : Promise.resolve([] as ExternalTitle[]),
+    ]);
     setGames(resp);
+    const seen = new Set<string>();
+    setExternals(externalTitles.filter((item) => {
+      if (!item.name || seen.has(item.name.toLowerCase())) return false;
+      seen.add(item.name.toLowerCase());
+      return true;
+    }));
     setLoading(false);
-  }, 600), [searchGames]);
+  }, 600), [searchGames, onSelectExternal]);
 
   useEffect(() => {
     setLoading(true);
@@ -147,9 +174,9 @@ const GameSelectionModal: FC<{
               <Spinner />
             </div>
           )}
-          {!loading && games.map((game: any) => (
+          {!loading && pickerItems.map((item) => (
             <Field
-              key={game.id}
+              key={item.key}
               bottomSeparator="none"
               icon={null}
               label={null}
@@ -158,11 +185,22 @@ const GameSelectionModal: FC<{
               spacingBetweenLabelAndChild="none"
               childrenContainerWidth="max"
             >
-              <DialogButton onClick={() => handleGameSelect(game)}>
-                <GameLabel game={game} />
+              <DialogButton style={{ display: 'block', width: '100%' }} onClick={() => handleItemSelect(item)}>
+                <span className="gameselect-row">
+                  <span className="gameselect-name">{item.name}</span>
+                  <span
+                    className={joinClassNames('gameselect-chip', `source-${item.source}`)}
+                    title={item.source === 'sgdb' ? 'SteamGridDB' : SOURCE_NAMES[item.source as ExternalSource]}
+                  >
+                    <SourceIcon source={item.source} />
+                  </span>
+                </span>
               </DialogButton>
             </Field>
           ))}
+          {!loading && pickerItems.length === 0 && (
+            <div className="gameselect-empty">{t('Search_NoResults', 'No Results Found.', true)}</div>
+          )}
         </DialogControlsSection>
       </DialogBody>
     </ModalRoot>
